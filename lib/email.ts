@@ -113,10 +113,18 @@ export async function sendVerificationEmail(
   const isDevelopment = process.env.NODE_ENV === 'development';
   const hasGoogleConfig = process.env.GOOGLE_CLIENT_ID &&
                          process.env.GOOGLE_CLIENT_SECRET &&
-                         process.env.GOOGLE_CLIENT_ID !== 'tu_google_client_id_aqui' &&
-                         process.env.SYSTEM_EMAIL_USER;
+                         process.env.GOOGLE_CLIENT_ID !== 'tu_google_client_id_aqui';
 
-  if (isDevelopment && !hasGoogleConfig) {
+  // Verificar si hay tokens en la base de datos
+  let hasTokens = false;
+  try {
+    const tokens = await getSystemEmailTokens();
+    hasTokens = tokens !== null;
+  } catch (error) {
+    console.error('Error al verificar tokens de email:', error);
+  }
+
+  if (isDevelopment && (!hasGoogleConfig || !hasTokens)) {
     console.log('\n' + '='.repeat(60));
     console.log('📧 CÓDIGO DE VERIFICACIÓN (Modo Desarrollo)');
     console.log('='.repeat(60));
@@ -124,8 +132,13 @@ export async function sendVerificationEmail(
     console.log(`Nombre: ${name}`);
     console.log(`Código: ${code}`);
     console.log('='.repeat(60));
-    console.log('⚠️  Para enviar emails reales, configura Google OAuth');
-    console.log('   Ver: CONFIGURACION_GOOGLE.md');
+    if (!hasGoogleConfig) {
+      console.log('⚠️  Para enviar emails reales, configura Google OAuth');
+      console.log('   Ver: CONFIGURACION_GOOGLE.md');
+    } else if (!hasTokens) {
+      console.log('⚠️  Gmail API configurado pero no hay cuenta conectada');
+      console.log('   Visita: /api/system/email/auth para conectar tu cuenta');
+    }
     console.log('='.repeat(60) + '\n');
     return;
   }
@@ -134,20 +147,39 @@ export async function sendVerificationEmail(
     const gmail = await getGmailClient();
 
     if (!gmail) {
-      // Si no hay cliente de Gmail, modo desarrollo
-      if (isDevelopment) {
-        console.log('\n' + '='.repeat(60));
-        console.log('📧 CÓDIGO DE VERIFICACIÓN (Modo Desarrollo)');
-        console.log('='.repeat(60));
-        console.log(`Email: ${email}`);
-        console.log(`Nombre: ${name}`);
-        console.log(`Código: ${code}`);
-        console.log('='.repeat(60));
-        console.log('⚠️  Gmail API no configurado. Conecta tu cuenta Google');
-        console.log('='.repeat(60) + '\n');
-        return;
+      // Si no hay cliente de Gmail, verificar qué falta
+      if (!hasGoogleConfig) {
+        const errorMsg = 'Gmail API no está configurado. Configura GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en las variables de entorno.';
+        console.error('❌', errorMsg);
+        if (isDevelopment) {
+          console.log('\n' + '='.repeat(60));
+          console.log('📧 CÓDIGO DE VERIFICACIÓN (Error de configuración)');
+          console.log('='.repeat(60));
+          console.log(`Email: ${email}`);
+          console.log(`Nombre: ${name}`);
+          console.log(`Código: ${code}`);
+          console.log('='.repeat(60) + '\n');
+          return;
+        }
+        throw new Error(errorMsg);
+      } else if (!hasTokens) {
+        const errorMsg = 'No hay cuenta de Google conectada para enviar emails. El administrador debe conectar una cuenta en /api/system/email/auth';
+        console.error('❌', errorMsg);
+        if (isDevelopment) {
+          console.log('\n' + '='.repeat(60));
+          console.log('📧 CÓDIGO DE VERIFICACIÓN (No hay cuenta conectada)');
+          console.log('='.repeat(60));
+          console.log(`Email: ${email}`);
+          console.log(`Nombre: ${name}`);
+          console.log(`Código: ${code}`);
+          console.log('='.repeat(60));
+          console.log('⚠️  Conecta tu cuenta Google en: /api/system/email/auth');
+          console.log('='.repeat(60) + '\n');
+          return;
+        }
+        throw new Error(errorMsg);
       }
-      throw new Error('Gmail API no configurado');
+      throw new Error('No se pudo crear el cliente de Gmail');
     }
 
     const htmlBody = `
@@ -264,10 +296,14 @@ El equipo de TaskWise
       console.log(`Email: ${email}`);
       console.log(`Nombre: ${name}`);
       console.log(`Código: ${code}`);
+      console.log('='.repeat(60));
+      console.log('Error:', error instanceof Error ? error.message : String(error));
       console.log('='.repeat(60) + '\n');
       return;
     }
 
-    throw new Error('No se pudo enviar el email de verificación');
+    // En producción, dar un mensaje más descriptivo
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido al enviar email';
+    throw new Error(`No se pudo enviar el email de verificación: ${errorMessage}`);
   }
 }

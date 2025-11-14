@@ -74,17 +74,55 @@ export async function POST(request: Request) {
     );
 
     // Enviar email de verificación
-    await sendVerificationEmail(email, name, verificationCode);
-
-    return NextResponse.json(
-      {
-        success: true,
-        message: 'Se ha enviado un código de verificación a tu email. Por favor revisa tu correo.',
-      },
-      { status: 200 }
-    );
+    try {
+      await sendVerificationEmail(email, name, verificationCode);
+      
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'Se ha enviado un código de verificación a tu email. Por favor revisa tu correo.',
+        },
+        { status: 200 }
+      );
+    } catch (emailError) {
+      // Si falla el envío del email, verificar si es un error de configuración
+      const errorMessage = emailError instanceof Error ? emailError.message : 'Error desconocido';
+      
+      // Si es un error de configuración, dar un mensaje más claro
+      if (errorMessage.includes('no está configurado') || 
+          errorMessage.includes('no hay cuenta') ||
+          errorMessage.includes('No hay cuenta')) {
+        console.error('Error de configuración de email:', errorMessage);
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'El sistema de verificación por email no está configurado. Por favor contacta al administrador.',
+            details: 'El código de verificación ha sido generado pero no se pudo enviar el email.',
+          },
+          { status: 503 } // Service Unavailable
+        );
+      }
+      
+      // Para otros errores, lanzar el error para que se capture en el catch general
+      throw emailError;
+    }
   } catch (error) {
     console.error('Error en registro:', error);
+    
+    // Determinar si es un error conocido
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    
+    // Si es un error de base de datos conocido
+    if (errorMessage.includes('duplicate key') || errorMessage.includes('unique constraint')) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'El email ya está registrado o existe un código de verificación pendiente.',
+        },
+        { status: 400 }
+      );
+    }
+    
     return NextResponse.json(
       {
         success: false,
