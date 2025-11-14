@@ -11,7 +11,13 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Rutas públicas que no requieren autenticación
-  const publicPaths = ['/login', '/register', '/api/auth', '/api/register'];
+  const publicPaths = [
+    '/login', 
+    '/register', 
+    '/api/auth', 
+    '/api/register',
+    '/api/system/email' // Rutas del sistema de email (configuración)
+  ];
   const isPublicPath = publicPaths.some((path) => pathname.startsWith(path));
 
   // Si está en una ruta pública, permitir acceso
