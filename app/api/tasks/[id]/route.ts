@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { UpdateTaskInput, ApiResponse, Task } from '@/lib/types';
+import { getServerSession } from 'next-auth';
+import { authConfig } from '@/lib/auth.config';
+import { emitTaskEvent } from '@/lib/socket-helper';
 
 // GET /api/tasks/[id] - Obtener una tarea por ID
 export async function GET(
@@ -8,11 +11,20 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getServerSession(authConfig);
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: 'No autenticado' },
+        { status: 401 }
+      );
+    }
+
     const { id } = await params;
 
     const result = await pool.query(
-      'SELECT * FROM tasks WHERE id = $1',
-      [id]
+      'SELECT * FROM tasks WHERE id = $1 AND user_id = $2',
+      [id, session.user.id]
     );
 
     if (result.rows.length === 0) {
@@ -47,6 +59,15 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getServerSession(authConfig);
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: 'No autenticado' },
+        { status: 401 }
+      );
+    }
+
     const { id } = await params;
     const body: UpdateTaskInput = await request.json();
 
@@ -101,9 +122,10 @@ export async function PUT(
     }
 
     values.push(id);
+    values.push(session.user.id);
 
     const result = await pool.query(
-      `UPDATE tasks SET ${fields.join(', ')} WHERE id = $${paramCount} RETURNING *`,
+      `UPDATE tasks SET ${fields.join(', ')} WHERE id = $${paramCount} AND user_id = $${paramCount + 1} RETURNING *`,
       values
     );
 
@@ -115,9 +137,14 @@ export async function PUT(
       return NextResponse.json(response, { status: 404 });
     }
 
+    const updatedTask = result.rows[0];
+
+    // Emitir evento de Socket.io
+    emitTaskEvent(session.user.id, 'task:updated', updatedTask);
+
     const response: ApiResponse<Task> = {
       success: true,
-      data: result.rows[0],
+      data: updatedTask,
     };
 
     return NextResponse.json(response);
@@ -139,11 +166,20 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getServerSession(authConfig);
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: 'No autenticado' },
+        { status: 401 }
+      );
+    }
+
     const { id } = await params;
 
     const result = await pool.query(
-      'DELETE FROM tasks WHERE id = $1 RETURNING id',
-      [id]
+      'DELETE FROM tasks WHERE id = $1 AND user_id = $2 RETURNING id',
+      [id, session.user.id]
     );
 
     if (result.rows.length === 0) {
@@ -154,9 +190,14 @@ export async function DELETE(
       return NextResponse.json(response, { status: 404 });
     }
 
+    const deletedId = result.rows[0].id;
+
+    // Emitir evento de Socket.io
+    emitTaskEvent(session.user.id, 'task:deleted', { id: deletedId });
+
     const response: ApiResponse = {
       success: true,
-      data: { id: result.rows[0].id },
+      data: { id: deletedId },
     };
 
     return NextResponse.json(response);

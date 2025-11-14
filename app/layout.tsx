@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { Geist } from 'next/font/google';
 import './globals.css';
 import { Toaster } from 'sonner';
+import { SessionProvider } from '@/components/providers/SessionProvider';
 
 const geist = Geist({ subsets: ['latin'] });
 
@@ -19,8 +20,10 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={geist.className}>
-        {children}
-        <Toaster position="top-right" richColors />
+        <SessionProvider>
+          {children}
+          <Toaster position="top-right" richColors />
+        </SessionProvider>
       </body>
     </html>
   );

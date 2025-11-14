@@ -18,4 +18,5 @@ pool.on('error', (err) => {
   console.error('❌ Error en el pool de PostgreSQL:', err);
 });
 
+export { pool };
 export default pool;

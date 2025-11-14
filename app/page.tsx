@@ -12,9 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut } from 'lucide-react';
+import { useSession, signOut } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import { useSocket } from '@/hooks/useSocket';
 
 export default function TasksPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -29,6 +34,34 @@ export default function TasksPage() {
     priority: 'medium' as TaskPriority,
     due_date: '',
   });
+
+  // Redirigir a login si no está autenticado
+  useEffect(() => {
+    if (status === 'unauthenticated') {
+      router.push('/login');
+    }
+  }, [status, router]);
+
+  // Socket.io para actualizaciones en tiempo real
+  useSocket(
+    // onTaskCreated
+    (task: Task) => {
+      setTasks((prevTasks) => [task, ...prevTasks]);
+      toast.success('Nueva tarea creada');
+    },
+    // onTaskUpdated
+    (task: Task) => {
+      setTasks((prevTasks) =>
+        prevTasks.map((t) => (t.id === task.id ? task : t))
+      );
+      toast.info('Tarea actualizada');
+    },
+    // onTaskDeleted
+    (data: { id: string }) => {
+      setTasks((prevTasks) => prevTasks.filter((t) => t.id !== data.id));
+      toast.info('Tarea eliminada');
+    }
+  );
 
   // Cargar tareas
   const loadTasks = async () => {
@@ -230,16 +263,41 @@ export default function TasksPage() {
     }
   };
 
-  if (loading) {
+  if (status === 'loading' || loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <p className="text-lg text-muted-foreground">Cargando tareas...</p>
+        <p className="text-lg text-muted-foreground">Cargando...</p>
       </div>
     );
   }
 
+  if (!session) {
+    return null;
+  }
+
   return (
     <div className="container mx-auto py-8 px-4 max-w-6xl">
+      {/* Header con usuario y logout */}
+      <div className="flex items-center justify-between mb-6 pb-4 border-b">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold">
+            {session.user?.name?.[0]?.toUpperCase() || session.user?.email?.[0]?.toUpperCase() || 'U'}
+          </div>
+          <div>
+            <p className="font-medium">{session.user?.name || 'Usuario'}</p>
+            <p className="text-sm text-muted-foreground">{session.user?.email}</p>
+          </div>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => signOut({ callbackUrl: '/login' })}
+          className="gap-2"
+        >
+          <LogOut className="w-4 h-4" />
+          Cerrar Sesión
+        </Button>
+      </div>
+
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-4xl font-bold">Gestor de Tareas</h1>
