@@ -17,6 +17,12 @@ import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useSocket } from '@/hooks/useSocket';
 
+// Función helper para parsear fechas tipo 'date' sin conversión UTC
+function parseLocalDate(dateString: string): Date {
+  const [year, month, day] = dateString.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
 export default function TasksPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -208,7 +214,7 @@ export default function TasksPage() {
       description: task.description || '',
       status: task.status,
       priority: task.priority,
-      due_date: task.due_date ? format(new Date(task.due_date), 'yyyy-MM-dd') : '',
+      due_date: task.due_date || '', // Ya está en formato yyyy-MM-dd, no necesita conversión
       time: task.time || '',
     });
     setIsEditDialogOpen(true);
@@ -394,7 +400,7 @@ export default function TasksPage() {
                 )}
                 {task.due_date && (
                   <p className="text-sm text-muted-foreground">
-                    Vencimiento: {format(new Date(task.due_date), 'dd MMM yyyy', { locale: es })}
+                    Vencimiento: {format(parseLocalDate(task.due_date), 'dd MMM yyyy', { locale: es })}
                     {task.time && ` a las ${task.time}`}
                   </p>
                 )}
