@@ -27,19 +27,30 @@ export default function LoginPage() {
         email: formData.email,
         password: formData.password,
         redirect: false,
+        callbackUrl: '/',
       });
 
+      console.log('Login result:', result);
+
       if (result?.error) {
+        console.error('Login error:', result.error);
         toast.error('Credenciales inválidas');
         setIsLoading(false);
-      } else {
+      } else if (result?.ok) {
         toast.success('Bienvenido de vuelta!');
-        // Usar window.location para forzar una recarga completa
-        // Esto asegura que la cookie de sesión esté disponible
-        window.location.href = '/';
+        // Esperar un momento para que la cookie se establezca
+        await new Promise(resolve => setTimeout(resolve, 100));
+        // Redirigir usando la URL del callback o fallback a '/'
+        const redirectUrl = result.url || '/';
+        console.log('Redirigiendo a:', redirectUrl);
+        window.location.href = redirectUrl;
+      } else {
+        console.error('Unexpected login result:', result);
+        toast.error('Error al iniciar sesión');
+        setIsLoading(false);
       }
     } catch (error) {
-      console.error('Error al iniciar sesión:', error);
+      console.error('Login exception:', error);
       toast.error('Error al iniciar sesión');
       setIsLoading(false);
     }

@@ -6,7 +6,10 @@ import { pool } from './db';
 export const authConfig = {
   pages: {
     signIn: '/login',
+    error: '/login',
   },
+  debug: process.env.NODE_ENV === 'development',
+  trustHost: true,
   providers: [
     Credentials({
       name: 'credentials',
@@ -54,6 +57,13 @@ export const authConfig = {
     }),
   ],
   callbacks: {
+    async redirect({ url, baseUrl }) {
+      // Permite redirecciones a rutas relativas
+      if (url.startsWith('/')) return `${baseUrl}${url}`;
+      // Permite callback URLs en el mismo dominio
+      else if (new URL(url).origin === baseUrl) return url;
+      return baseUrl;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
