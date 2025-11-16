@@ -12,9 +12,9 @@ export async function middleware(request: NextRequest) {
 
   // Rutas públicas que no requieren autenticación
   const publicPaths = [
-    '/login', 
-    '/register', 
-    '/api/auth', 
+    '/login',
+    '/register',
+    '/api/auth',
     '/api/register',
     '/api/system/email' // Rutas del sistema de email (configuración)
   ];

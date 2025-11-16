@@ -10,6 +10,8 @@ export interface Task {
   status: TaskStatus;
   priority: TaskPriority;
   due_date: string | null;
+  time: string | null;
+  google_calendar_event_id: string | null;
   completed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -21,6 +23,7 @@ export interface CreateTaskInput {
   status?: TaskStatus;
   priority?: TaskPriority;
   due_date?: string;
+  time?: string;
 }
 
 export interface UpdateTaskInput {
@@ -29,6 +32,7 @@ export interface UpdateTaskInput {
   status?: TaskStatus;
   priority?: TaskPriority;
   due_date?: string;
+  time?: string;
 }
 
 export interface ApiResponse<T = any> {

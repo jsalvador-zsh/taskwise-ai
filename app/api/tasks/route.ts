@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { CreateTaskInput, ApiResponse, Task } from '@/lib/types';
-import { getServerSession } from 'next-auth';
-import { authConfig } from '@/lib/auth.config';
+import { auth } from '@/lib/auth';
 import { emitTaskEvent } from '@/lib/socket-helper';
 import { createCalendarEvent, userHasCalendarAccess } from '@/lib/google-calendar';
 
 // GET /api/tasks - Obtener todas las tareas del usuario autenticado
 export async function GET() {
   try {
-    const session = await getServerSession(authConfig);
+    const session = await auth();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -44,7 +43,7 @@ export async function GET() {
 // POST /api/tasks - Crear una nueva tarea
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authConfig);
+    const session = await auth();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -91,7 +90,7 @@ export async function POST(request: NextRequest) {
             session.user.id,
             newTask.title,
             newTask.description || '',
-            new Date(newTask.due_date),
+            newTask.due_date,
             newTask.time
           );
 

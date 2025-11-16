@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut } from 'lucide-react';
+import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut, Calendar } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useSocket } from '@/hooks/useSocket';
@@ -25,6 +25,8 @@ export default function TasksPage() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [calendarConnected, setCalendarConnected] = useState(false);
+  const [checkingCalendar, setCheckingCalendar] = useState(true);
 
   // Formulario
   const [formData, setFormData] = useState({
@@ -33,6 +35,7 @@ export default function TasksPage() {
     status: 'pending' as TaskStatus,
     priority: 'medium' as TaskPriority,
     due_date: '',
+    time: '',
   });
 
   // Redirigir a login si no está autenticado
@@ -84,7 +87,35 @@ export default function TasksPage() {
 
   useEffect(() => {
     loadTasks();
+    checkCalendarStatus();
   }, []);
+
+  // Verificar estado de conexión con Google Calendar
+  const checkCalendarStatus = async () => {
+    try {
+      const response = await fetch('/api/google-calendar/status');
+      const result = await response.json();
+      setCalendarConnected(result.connected);
+    } catch (error) {
+      console.error('Error al verificar estado de Google Calendar:', error);
+    } finally {
+      setCheckingCalendar(false);
+    }
+  };
+
+  // Conectar con Google Calendar
+  const connectCalendar = async () => {
+    try {
+      const response = await fetch('/api/google-calendar/auth');
+      const result = await response.json();
+      if (result.authUrl) {
+        window.location.href = result.authUrl;
+      }
+    } catch (error) {
+      console.error('Error al conectar Google Calendar:', error);
+      toast.error('Error al conectar con Google Calendar');
+    }
+  };
 
   // Crear tarea
   const handleCreate = async () => {
@@ -178,6 +209,7 @@ export default function TasksPage() {
       status: task.status,
       priority: task.priority,
       due_date: task.due_date ? format(new Date(task.due_date), 'yyyy-MM-dd') : '',
+      time: task.time || '',
     });
     setIsEditDialogOpen(true);
   };
@@ -190,6 +222,7 @@ export default function TasksPage() {
       status: 'pending',
       priority: 'medium',
       due_date: '',
+      time: '',
     });
   };
 
@@ -303,10 +336,18 @@ export default function TasksPage() {
           <h1 className="text-4xl font-bold">Gestor de Tareas</h1>
           <p className="text-muted-foreground mt-2">Administra tus tareas de forma simple y eficiente</p>
         </div>
-        <Button onClick={() => setIsCreateDialogOpen(true)} size="lg">
-          <Plus className="w-5 h-5 mr-2" />
-          Nueva Tarea
-        </Button>
+        <div className="flex gap-3">
+          {!checkingCalendar && !calendarConnected && (
+            <Button onClick={connectCalendar} variant="outline" size="lg">
+              <Calendar className="w-5 h-5 mr-2" />
+              Conectar Google Calendar
+            </Button>
+          )}
+          <Button onClick={() => setIsCreateDialogOpen(true)} size="lg">
+            <Plus className="w-5 h-5 mr-2" />
+            Nueva Tarea
+          </Button>
+        </div>
       </div>
 
       {tasks.length === 0 ? (
@@ -354,6 +395,12 @@ export default function TasksPage() {
                 {task.due_date && (
                   <p className="text-sm text-muted-foreground">
                     Vencimiento: {format(new Date(task.due_date), 'dd MMM yyyy', { locale: es })}
+                    {task.time && ` a las ${task.time}`}
+                  </p>
+                )}
+                {task.google_calendar_event_id && (
+                  <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                    <span>📅</span> Sincronizado con Google Calendar
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground mt-2">
@@ -431,6 +478,19 @@ export default function TasksPage() {
                 onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
               />
             </div>
+            <div>
+              <Label htmlFor="time">Hora (opcional)</Label>
+              <Input
+                id="time"
+                type="time"
+                value={formData.time}
+                onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+                placeholder="HH:MM"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Se creará un evento de 1 hora en Google Calendar si está conectado
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsCreateDialogOpen(false); resetForm(); }}>
@@ -506,6 +566,19 @@ export default function TasksPage() {
                 value={formData.due_date}
                 onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
               />
+            </div>
+            <div>
+              <Label htmlFor="edit-time">Hora (opcional)</Label>
+              <Input
+                id="edit-time"
+                type="time"
+                value={formData.time}
+                onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+                placeholder="HH:MM"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Se actualizará el evento en Google Calendar si está conectado
+              </p>
             </div>
           </div>
           <DialogFooter>

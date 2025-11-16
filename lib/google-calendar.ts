@@ -96,17 +96,31 @@ export async function createCalendarEvent(
   userId: string,
   title: string,
   description: string,
-  date: Date,
+  date: Date | string,
   time?: string
 ) {
   try {
     const calendar = await getCalendarClient(userId);
 
-    // Combinar fecha y hora
-    const startDateTime = new Date(date);
+    // Crear fecha correctamente en la zona horaria local
+    // Si date viene como string "2025-11-17", necesitamos parsearlo correctamente
+    let startDateTime: Date;
+
+    if (typeof date === 'string') {
+      // Parsear la fecha como fecha local, no UTC
+      const [year, month, day] = date.split('-').map(Number);
+      startDateTime = new Date(year, month - 1, day);
+    } else {
+      startDateTime = new Date(date);
+    }
+
+    // Agregar la hora si existe
     if (time) {
       const [hours, minutes] = time.split(':');
-      startDateTime.setHours(parseInt(hours), parseInt(minutes));
+      startDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+    } else {
+      // Si no hay hora, usar 9:00 AM por defecto
+      startDateTime.setHours(9, 0, 0, 0);
     }
 
     // La duración por defecto es 1 hora
@@ -118,11 +132,11 @@ export async function createCalendarEvent(
       description: description || undefined,
       start: {
         dateTime: startDateTime.toISOString(),
-        timeZone: 'America/Mexico_City',
+        timeZone: 'America/Lima',
       },
       end: {
         dateTime: endDateTime.toISOString(),
-        timeZone: 'America/Mexico_City',
+        timeZone: 'America/Lima',
       },
     };
 
@@ -144,16 +158,30 @@ export async function updateCalendarEvent(
   eventId: string,
   title: string,
   description: string,
-  date: Date,
+  date: Date | string,
   time?: string
 ) {
   try {
     const calendar = await getCalendarClient(userId);
 
-    const startDateTime = new Date(date);
+    // Crear fecha correctamente en la zona horaria local
+    let startDateTime: Date;
+
+    if (typeof date === 'string') {
+      // Parsear la fecha como fecha local, no UTC
+      const [year, month, day] = date.split('-').map(Number);
+      startDateTime = new Date(year, month - 1, day);
+    } else {
+      startDateTime = new Date(date);
+    }
+
+    // Agregar la hora si existe
     if (time) {
       const [hours, minutes] = time.split(':');
-      startDateTime.setHours(parseInt(hours), parseInt(minutes));
+      startDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+    } else {
+      // Si no hay hora, usar 9:00 AM por defecto
+      startDateTime.setHours(9, 0, 0, 0);
     }
 
     const endDateTime = new Date(startDateTime);

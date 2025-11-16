@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { UpdateTaskInput, ApiResponse, Task } from '@/lib/types';
-import { getServerSession } from 'next-auth';
-import { authConfig } from '@/lib/auth.config';
+import { auth } from '@/lib/auth';
 import { emitTaskEvent } from '@/lib/socket-helper';
+import { updateCalendarEvent, deleteCalendarEvent, userHasCalendarAccess } from '@/lib/google-calendar';
 
 // GET /api/tasks/[id] - Obtener una tarea por ID
 export async function GET(
@@ -11,7 +11,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authConfig);
+    const session = await auth();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -59,7 +59,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authConfig);
+    const session = await auth();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -113,6 +113,12 @@ export async function PUT(
       paramCount++;
     }
 
+    if (body.time !== undefined) {
+      fields.push(`time = $${paramCount}`);
+      values.push(body.time);
+      paramCount++;
+    }
+
     if (fields.length === 0) {
       const response: ApiResponse = {
         success: false,
@@ -138,6 +144,27 @@ export async function PUT(
     }
 
     const updatedTask = result.rows[0];
+
+    // Sincronizar con Google Calendar si existe un evento asociado
+    if (updatedTask.google_calendar_event_id && updatedTask.due_date) {
+      try {
+        const hasCalendarAccess = await userHasCalendarAccess(session.user.id);
+
+        if (hasCalendarAccess) {
+          await updateCalendarEvent(
+            session.user.id,
+            updatedTask.google_calendar_event_id,
+            updatedTask.title,
+            updatedTask.description || '',
+            updatedTask.due_date,
+            updatedTask.time
+          );
+        }
+      } catch (calendarError) {
+        console.error('Error al actualizar en Google Calendar:', calendarError);
+        // No fallar la actualización de la tarea si falla la sincronización
+      }
+    }
 
     // Emitir evento de Socket.io
     emitTaskEvent(session.user.id, 'task:updated', updatedTask);
@@ -166,7 +193,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authConfig);
+    const session = await auth();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -177,18 +204,41 @@ export async function DELETE(
 
     const { id } = await params;
 
-    const result = await pool.query(
-      'DELETE FROM tasks WHERE id = $1 AND user_id = $2 RETURNING id',
+    // Primero obtener la tarea para verificar si tiene un evento de Google Calendar
+    const taskResult = await pool.query(
+      'SELECT google_calendar_event_id FROM tasks WHERE id = $1 AND user_id = $2',
       [id, session.user.id]
     );
 
-    if (result.rows.length === 0) {
+    if (taskResult.rows.length === 0) {
       const response: ApiResponse = {
         success: false,
         error: 'Tarea no encontrada',
       };
       return NextResponse.json(response, { status: 404 });
     }
+
+    const task = taskResult.rows[0];
+
+    // Eliminar de Google Calendar si existe un evento asociado
+    if (task.google_calendar_event_id) {
+      try {
+        const hasCalendarAccess = await userHasCalendarAccess(session.user.id);
+
+        if (hasCalendarAccess) {
+          await deleteCalendarEvent(session.user.id, task.google_calendar_event_id);
+        }
+      } catch (calendarError) {
+        console.error('Error al eliminar de Google Calendar:', calendarError);
+        // No fallar la eliminación de la tarea si falla la sincronización
+      }
+    }
+
+    // Eliminar la tarea de la base de datos
+    const result = await pool.query(
+      'DELETE FROM tasks WHERE id = $1 AND user_id = $2 RETURNING id',
+      [id, session.user.id]
+    );
 
     const deletedId = result.rows[0].id;
 

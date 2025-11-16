@@ -31,15 +31,16 @@ export default function LoginPage() {
 
       if (result?.error) {
         toast.error('Credenciales inválidas');
+        setIsLoading(false);
       } else {
         toast.success('Bienvenido de vuelta!');
-        router.push('/');
-        router.refresh();
+        // Usar window.location para forzar una recarga completa
+        // Esto asegura que la cookie de sesión esté disponible
+        window.location.href = '/';
       }
     } catch (error) {
       console.error('Error al iniciar sesión:', error);
       toast.error('Error al iniciar sesión');
-    } finally {
       setIsLoading(false);
     }
   };
