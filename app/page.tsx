@@ -18,9 +18,31 @@ import { useRouter } from 'next/navigation';
 import { useSocket } from '@/hooks/useSocket';
 
 // Función helper para parsear fechas tipo 'date' sin conversión UTC
-function parseLocalDate(dateString: string): Date {
-  const [year, month, day] = dateString.split('-').map(Number);
-  return new Date(year, month - 1, day);
+function parseLocalDate(dateString: string | null): Date | null {
+  if (!dateString) return null;
+
+  try {
+    const [year, month, day] = dateString.split('-').map(Number);
+
+    // Validar que todos los valores sean números válidos
+    if (isNaN(year) || isNaN(month) || isNaN(day)) {
+      console.error('Invalid date components:', { year, month, day, dateString });
+      return null;
+    }
+
+    const date = new Date(year, month - 1, day);
+
+    // Verificar que la fecha sea válida
+    if (isNaN(date.getTime())) {
+      console.error('Invalid date created:', dateString);
+      return null;
+    }
+
+    return date;
+  } catch (error) {
+    console.error('Error parsing date:', dateString, error);
+    return null;
+  }
 }
 
 export default function TasksPage() {
@@ -398,12 +420,16 @@ export default function TasksPage() {
                 {task.description && (
                   <CardDescription className="mb-3 line-clamp-3">{task.description}</CardDescription>
                 )}
-                {task.due_date && (
-                  <p className="text-sm text-muted-foreground">
-                    Vencimiento: {format(parseLocalDate(task.due_date), 'dd MMM yyyy', { locale: es })}
-                    {task.time && ` a las ${task.time}`}
-                  </p>
-                )}
+                {task.due_date && (() => {
+                  const parsedDate = parseLocalDate(task.due_date);
+                  if (!parsedDate) return null;
+                  return (
+                    <p className="text-sm text-muted-foreground">
+                      Vencimiento: {format(parsedDate, 'dd MMM yyyy', { locale: es })}
+                      {task.time && ` a las ${task.time}`}
+                    </p>
+                  );
+                })()}
                 {task.google_calendar_event_id && (
                   <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
                     <span>📅</span> Sincronizado con Google Calendar
