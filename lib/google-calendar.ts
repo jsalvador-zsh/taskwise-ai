@@ -102,52 +102,61 @@ export async function createCalendarEvent(
   try {
     const calendar = await getCalendarClient(userId);
 
-    // Crear fecha correctamente en la zona horaria local
-    // Si date viene como string "2025-11-17", necesitamos parsearlo correctamente
-    let startDateTime: Date;
+    console.log('📅 Creando evento en Google Calendar:', { date, time, dateType: typeof date });
+
+    // Parsear fecha y hora
+    let dateStr: string;
+    let timeStr: string;
 
     if (typeof date === 'string') {
-      // Parsear la fecha como fecha local, no UTC
-      const [year, month, day] = date.split('-').map(Number);
-      startDateTime = new Date(year, month - 1, day);
+      dateStr = date; // "2025-11-17"
     } else {
-      startDateTime = new Date(date);
+      // Convertir Date a string YYYY-MM-DD en zona horaria local
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      dateStr = `${year}-${month}-${day}`;
     }
 
-    // Agregar la hora si existe
-    if (time) {
-      const [hours, minutes] = time.split(':');
-      startDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
-    } else {
-      // Si no hay hora, usar 9:00 AM por defecto
-      startDateTime.setHours(9, 0, 0, 0);
-    }
+    timeStr = time || '09:00';
 
-    // La duración por defecto es 1 hora
-    const endDateTime = new Date(startDateTime);
-    endDateTime.setHours(endDateTime.getHours() + 1);
+    // Construir la fecha/hora en formato ISO pero interpretada en America/Lima
+    // Formato: "2025-11-17T09:00:00" (sin Z para que se interprete en la zona horaria especificada)
+    const dateTimeStr = `${dateStr}T${timeStr}:00`;
+
+    console.log('📅 DateTime string para Google Calendar:', dateTimeStr);
+
+    // Calcular la hora de fin (1 hora después)
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const endHours = hours + 1;
+    const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
 
     const event = {
       summary: title,
       description: description || undefined,
       start: {
-        dateTime: startDateTime.toISOString(),
+        dateTime: dateTimeStr,
         timeZone: 'America/Lima',
       },
       end: {
-        dateTime: endDateTime.toISOString(),
+        dateTime: endDateTimeStr,
         timeZone: 'America/Lima',
       },
     };
+
+    console.log('📅 Evento a crear:', JSON.stringify(event, null, 2));
 
     const response = await calendar.events.insert({
       calendarId: 'primary',
       requestBody: event,
     });
 
+    console.log('✅ Evento creado con ID:', response.data.id);
+
     return response.data.id;
   } catch (error) {
-    console.error('Error al crear evento en Google Calendar:', error);
+    console.error('❌ Error al crear evento en Google Calendar:', error);
     throw error;
   }
 }
@@ -164,49 +173,56 @@ export async function updateCalendarEvent(
   try {
     const calendar = await getCalendarClient(userId);
 
-    // Crear fecha correctamente en la zona horaria local
-    let startDateTime: Date;
+    console.log('📅 Actualizando evento en Google Calendar:', { eventId, date, time, dateType: typeof date });
+
+    // Parsear fecha y hora
+    let dateStr: string;
+    let timeStr: string;
 
     if (typeof date === 'string') {
-      // Parsear la fecha como fecha local, no UTC
-      const [year, month, day] = date.split('-').map(Number);
-      startDateTime = new Date(year, month - 1, day);
+      dateStr = date; // "2025-11-17"
     } else {
-      startDateTime = new Date(date);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      dateStr = `${year}-${month}-${day}`;
     }
 
-    // Agregar la hora si existe
-    if (time) {
-      const [hours, minutes] = time.split(':');
-      startDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
-    } else {
-      // Si no hay hora, usar 9:00 AM por defecto
-      startDateTime.setHours(9, 0, 0, 0);
-    }
+    timeStr = time || '09:00';
 
-    const endDateTime = new Date(startDateTime);
-    endDateTime.setHours(endDateTime.getHours() + 1);
+    // Construir la fecha/hora en formato ISO interpretada en America/Lima
+    const dateTimeStr = `${dateStr}T${timeStr}:00`;
+
+    // Calcular la hora de fin (1 hora después)
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const endHours = hours + 1;
+    const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
 
     const event = {
       summary: title,
       description: description || undefined,
       start: {
-        dateTime: startDateTime.toISOString(),
-        timeZone: 'America/Mexico_City',
+        dateTime: dateTimeStr,
+        timeZone: 'America/Lima',
       },
       end: {
-        dateTime: endDateTime.toISOString(),
-        timeZone: 'America/Mexico_City',
+        dateTime: endDateTimeStr,
+        timeZone: 'America/Lima',
       },
     };
+
+    console.log('📅 Evento a actualizar:', JSON.stringify(event, null, 2));
 
     await calendar.events.update({
       calendarId: 'primary',
       eventId: eventId,
       requestBody: event,
     });
+
+    console.log('✅ Evento actualizado correctamente');
   } catch (error) {
-    console.error('Error al actualizar evento en Google Calendar:', error);
+    console.error('❌ Error al actualizar evento en Google Calendar:', error);
     throw error;
   }
 }

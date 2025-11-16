@@ -54,6 +54,14 @@ export async function POST(request: NextRequest) {
 
     const body: CreateTaskInput = await request.json();
 
+    // Debug: Ver qué valores llegan del frontend
+    console.log('📝 Datos recibidos para crear tarea:', {
+      title: body.title,
+      due_date: body.due_date,
+      time: body.time,
+      due_date_type: typeof body.due_date
+    });
+
     // Validación básica
     if (!body.title || body.title.trim() === '') {
       const response: ApiResponse = {
@@ -79,6 +87,15 @@ export async function POST(request: NextRequest) {
     );
 
     const newTask = result.rows[0];
+
+    // Debug: Ver qué se guardó en la base de datos
+    console.log('💾 Tarea guardada en DB:', {
+      id: newTask.id,
+      title: newTask.title,
+      due_date: newTask.due_date,
+      time: newTask.time,
+      due_date_type: typeof newTask.due_date
+    });
 
     // Sincronizar con Google Calendar si el usuario tiene acceso
     if (newTask.due_date) {
