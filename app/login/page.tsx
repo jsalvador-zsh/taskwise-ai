@@ -37,13 +37,32 @@ export default function LoginPage() {
         toast.error('Credenciales inválidas');
         setIsLoading(false);
       } else if (result?.ok) {
+        console.log('✅ Login exitoso');
         toast.success('Bienvenido de vuelta!');
-        // Esperar un momento para que la cookie se establezca
-        await new Promise(resolve => setTimeout(resolve, 100));
-        // Redirigir usando la URL del callback o fallback a '/'
-        const redirectUrl = result.url || '/';
-        console.log('Redirigiendo a:', redirectUrl);
-        window.location.href = redirectUrl;
+
+        // Esperar más tiempo para que la cookie se establezca completamente
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Verificar que la sesión esté disponible antes de redirigir
+        try {
+          const sessionCheck = await fetch('/api/auth/session');
+          const sessionData = await sessionCheck.json();
+          console.log('Session data:', sessionData);
+
+          if (sessionData?.user) {
+            console.log('✅ Sesión verificada, redirigiendo...');
+            const redirectUrl = result.url || '/';
+            window.location.href = redirectUrl;
+          } else {
+            console.error('❌ Sesión no encontrada después del login');
+            toast.error('Error: Sesión no establecida. Por favor, intenta de nuevo.');
+            setIsLoading(false);
+          }
+        } catch (sessionError) {
+          console.error('❌ Error verificando sesión:', sessionError);
+          toast.error('Error al verificar la sesión');
+          setIsLoading(false);
+        }
       } else {
         console.error('Unexpected login result:', result);
         toast.error('Error al iniciar sesión');

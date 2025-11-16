@@ -8,8 +8,20 @@ export const authConfig = {
     signIn: '/login',
     error: '/login',
   },
-  debug: process.env.NODE_ENV === 'development',
+  debug: true, // Habilitar debug temporalmente en producción para diagnosticar
   trustHost: true,
+  useSecureCookies: process.env.NODE_ENV === 'production',
+  cookies: {
+    sessionToken: {
+      name: `${process.env.NODE_ENV === 'production' ? '__Secure-' : ''}next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+      },
+    },
+  },
   providers: [
     Credentials({
       name: 'credentials',
