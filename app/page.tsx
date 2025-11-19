@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut, Calendar } from 'lucide-react';
+import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut, Calendar, Settings } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useSocket } from '@/hooks/useSocket';
@@ -55,6 +55,9 @@ export default function TasksPage() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [checkingCalendar, setCheckingCalendar] = useState(true);
+  const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+  const [calendarAccount, setCalendarAccount] = useState<{ email: string; summary: string } | null>(null);
+  const [loadingCalendarInfo, setLoadingCalendarInfo] = useState(false);
 
   // Formulario
   const [formData, setFormData] = useState({
@@ -142,6 +145,55 @@ export default function TasksPage() {
     } catch (error) {
       console.error('Error al conectar Google Calendar:', error);
       toast.error('Error al conectar con Google Calendar');
+    }
+  };
+
+  // Cargar información de la cuenta de Google Calendar
+  const loadCalendarAccount = async () => {
+    setLoadingCalendarInfo(true);
+    try {
+      const response = await fetch('/api/google-calendar/account');
+      const result = await response.json();
+      if (result.success && result.account) {
+        setCalendarAccount(result.account);
+      } else {
+        setCalendarAccount(null);
+      }
+    } catch (error) {
+      console.error('Error al cargar cuenta de Google Calendar:', error);
+      setCalendarAccount(null);
+    } finally {
+      setLoadingCalendarInfo(false);
+    }
+  };
+
+  // Desconectar Google Calendar
+  const disconnectCalendar = async () => {
+    try {
+      const response = await fetch('/api/google-calendar/disconnect', {
+        method: 'DELETE',
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        toast.success('Google Calendar desconectado exitosamente');
+        setCalendarConnected(false);
+        setCalendarAccount(null);
+        loadTasks(); // Recargar tareas para actualizar indicadores
+      } else {
+        toast.error(result.error || 'Error al desconectar');
+      }
+    } catch (error) {
+      console.error('Error al desconectar Google Calendar:', error);
+      toast.error('Error al desconectar Google Calendar');
+    }
+  };
+
+  // Abrir modal de configuración
+  const openSettingsDialog = () => {
+    setIsSettingsDialogOpen(true);
+    if (calendarConnected) {
+      loadCalendarAccount();
     }
   };
 
@@ -349,14 +401,24 @@ export default function TasksPage() {
             <p className="text-sm text-muted-foreground">{session.user?.email}</p>
           </div>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => signOut({ callbackUrl: '/login' })}
-          className="gap-2"
-        >
-          <LogOut className="w-4 h-4" />
-          Cerrar Sesión
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={openSettingsDialog}
+            className="gap-2"
+          >
+            <Settings className="w-4 h-4" />
+            Configuración
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => signOut({ callbackUrl: '/login' })}
+            className="gap-2"
+          >
+            <LogOut className="w-4 h-4" />
+            Cerrar Sesión
+          </Button>
+        </div>
       </div>
 
       <div className="flex items-center justify-between mb-8">
@@ -364,18 +426,10 @@ export default function TasksPage() {
           <h1 className="text-4xl font-bold">Gestor de Tareas</h1>
           <p className="text-muted-foreground mt-2">Administra tus tareas de forma simple y eficiente</p>
         </div>
-        <div className="flex gap-3">
-          {!checkingCalendar && !calendarConnected && (
-            <Button onClick={connectCalendar} variant="outline" size="lg">
-              <Calendar className="w-5 h-5 mr-2" />
-              Conectar Google Calendar
-            </Button>
-          )}
-          <Button onClick={() => setIsCreateDialogOpen(true)} size="lg">
-            <Plus className="w-5 h-5 mr-2" />
-            Nueva Tarea
-          </Button>
-        </div>
+        <Button onClick={() => setIsCreateDialogOpen(true)} size="lg">
+          <Plus className="w-5 h-5 mr-2" />
+          Nueva Tarea
+        </Button>
       </div>
 
       {tasks.length === 0 ? (
@@ -618,6 +672,98 @@ export default function TasksPage() {
               Cancelar
             </Button>
             <Button onClick={handleUpdate}>Guardar Cambios</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Configuración */}
+      <Dialog open={isSettingsDialogOpen} onOpenChange={setIsSettingsDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Configuración</DialogTitle>
+            <DialogDescription>
+              Gestiona la integración con Google Calendar
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            {/* Sección de Google Calendar */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-blue-600" />
+                <h3 className="font-semibold text-lg">Google Calendar</h3>
+              </div>
+
+              {checkingCalendar ? (
+                <p className="text-sm text-muted-foreground">Verificando conexión...</p>
+              ) : calendarConnected ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <p className="text-sm font-medium">Conectado</p>
+                  </div>
+
+                  {loadingCalendarInfo ? (
+                    <p className="text-sm text-muted-foreground">Cargando información...</p>
+                  ) : calendarAccount ? (
+                    <div className="bg-muted p-4 rounded-lg space-y-2">
+                      <p className="text-sm font-medium">Cuenta vinculada:</p>
+                      <p className="text-sm text-muted-foreground">{calendarAccount.email}</p>
+                      {calendarAccount.summary && (
+                        <p className="text-xs text-muted-foreground">{calendarAccount.summary}</p>
+                      )}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Las tareas con fecha y hora se sincronizan automáticamente con tu Google Calendar.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={disconnectCalendar}
+                        className="gap-2"
+                      >
+                        Desconectar
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={connectCalendar}
+                        className="gap-2"
+                      >
+                        Reconectar con otra cuenta
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                    <p className="text-sm font-medium">No conectado</p>
+                  </div>
+
+                  <p className="text-sm text-muted-foreground">
+                    Conecta tu Google Calendar para sincronizar automáticamente tus tareas con eventos.
+                  </p>
+
+                  <Button
+                    onClick={connectCalendar}
+                    className="gap-2 w-full"
+                  >
+                    <Calendar className="w-4 h-4" />
+                    Conectar Google Calendar
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setIsSettingsDialogOpen(false)}>
+              Cerrar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
