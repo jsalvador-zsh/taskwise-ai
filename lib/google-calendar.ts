@@ -9,12 +9,16 @@ const oauth2Client = new google.auth.OAuth2(
 
 // Obtener URL de autorización
 export function getAuthUrl() {
+  const scopes = [
+    'https://www.googleapis.com/auth/calendar.events', // Crear, leer, actualizar y eliminar eventos
+    'https://www.googleapis.com/auth/userinfo.email',  // Leer email del usuario
+  ];
+
+  console.log('🔑 Generando URL de autorización con scopes:', scopes);
+
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
-    scope: [
-      'https://www.googleapis.com/auth/calendar.events',
-      'https://www.googleapis.com/auth/gmail.send'
-    ],
+    scope: scopes,
     prompt: 'consent',
   });
 }
@@ -66,8 +70,13 @@ export async function getCalendarClient(userId: string) {
   const tokens = await getUserTokens(userId);
 
   if (!tokens) {
+    console.error('❌ No se encontraron tokens para el usuario:', userId);
     throw new Error('No se encontraron tokens de Google Calendar para este usuario');
   }
+
+  console.log('🔑 Tokens encontrados para usuario:', userId);
+  console.log('🔑 Token expiry:', tokens.token_expiry);
+  console.log('🔑 Token expirado?:', new Date(tokens.token_expiry) < new Date());
 
   oauth2Client.setCredentials({
     access_token: tokens.access_token,
@@ -77,6 +86,7 @@ export async function getCalendarClient(userId: string) {
 
   // Refrescar token si ha expirado
   if (new Date(tokens.token_expiry) < new Date()) {
+    console.log('🔄 Refrescando token expirado...');
     const { credentials } = await oauth2Client.refreshAccessToken();
     await saveUserTokens(
       userId,
@@ -86,6 +96,7 @@ export async function getCalendarClient(userId: string) {
       credentials.scope!
     );
     oauth2Client.setCredentials(credentials);
+    console.log('✅ Token refrescado exitosamente');
   }
 
   return google.calendar({ version: 'v3', auth: oauth2Client });
@@ -155,8 +166,12 @@ export async function createCalendarEvent(
     console.log('✅ Evento creado con ID:', response.data.id);
 
     return response.data.id;
-  } catch (error) {
-    console.error('❌ Error al crear evento en Google Calendar:', error);
+  } catch (error: any) {
+    console.error('❌ Error al crear evento en Google Calendar:');
+    console.error('Error completo:', JSON.stringify(error, null, 2));
+    console.error('Error message:', error?.message);
+    console.error('Error response:', error?.response?.data);
+    console.error('Error config:', error?.config);
     throw error;
   }
 }

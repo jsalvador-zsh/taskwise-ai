@@ -23,13 +23,23 @@ export async function GET(request: Request) {
     }
 
     // Intercambiar código por tokens
+    console.log('🔑 Intercambiando código por tokens...');
     const tokens = await getTokensFromCode(code);
 
+    console.log('🔑 Tokens recibidos de Google:', {
+      has_access_token: !!tokens.access_token,
+      has_refresh_token: !!tokens.refresh_token,
+      expiry_date: tokens.expiry_date,
+      scope: tokens.scope
+    });
+
     if (!tokens.access_token || !tokens.refresh_token) {
+      console.error('❌ Tokens inválidos recibidos');
       return NextResponse.redirect(new URL('/?error=invalid_tokens', request.url));
     }
 
     // Guardar tokens en la base de datos
+    console.log('💾 Guardando tokens en la base de datos para usuario:', session.user.id);
     await saveUserTokens(
       session.user.id,
       tokens.access_token,
@@ -37,6 +47,8 @@ export async function GET(request: Request) {
       tokens.expiry_date || Date.now() + 3600000,
       tokens.scope || 'https://www.googleapis.com/auth/calendar.events'
     );
+
+    console.log('✅ Tokens guardados exitosamente');
 
     // Redirigir al dashboard con mensaje de éxito
     return NextResponse.redirect(new URL('/?calendar_connected=true', request.url));

@@ -118,9 +118,13 @@ export async function POST(request: NextRequest) {
           );
 
           newTask.google_calendar_event_id = eventId;
+          console.log('✅ Evento sincronizado correctamente con ID:', eventId);
         }
-      } catch (calendarError) {
-        console.error('Error al sincronizar con Google Calendar:', calendarError);
+      } catch (calendarError: any) {
+        console.error('❌ Error al sincronizar con Google Calendar:');
+        console.error('Error message:', calendarError?.message);
+        console.error('Error details:', calendarError?.response?.data);
+        console.error('Error status:', calendarError?.status || calendarError?.code);
         // No fallar la creación de la tarea si falla la sincronización
       }
     }
