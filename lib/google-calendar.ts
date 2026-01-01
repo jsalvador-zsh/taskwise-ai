@@ -129,6 +129,8 @@ export async function createCalendarEvent(
   date: Date | string,
   time?: string | null
 ) {
+  let eventToCreate: any;
+
   try {
     const calendar = await getCalendarClient(userId);
 
@@ -147,8 +149,6 @@ export async function createCalendarEvent(
       dateStr = `${year}-${month}-${day}`;
     }
 
-    let event: any;
-
     // Si hay hora específica, crear evento con dateTime
     // Si no hay hora, crear evento de todo el día con date
     if (time) {
@@ -161,7 +161,7 @@ export async function createCalendarEvent(
       const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
       const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
 
-      event = {
+      eventToCreate = {
         summary: title,
         description: description || undefined,
         start: {
@@ -174,10 +174,10 @@ export async function createCalendarEvent(
         },
       };
 
-      console.log('📅 Evento con hora específica:', JSON.stringify(event, null, 2));
+      console.log('📅 Evento con hora específica:', JSON.stringify(eventToCreate, null, 2));
     } else {
       // Evento de todo el día (sin hora)
-      event = {
+      eventToCreate = {
         summary: title,
         description: description || undefined,
         start: {
@@ -188,12 +188,12 @@ export async function createCalendarEvent(
         },
       };
 
-      console.log('📅 Evento de todo el día:', JSON.stringify(event, null, 2));
+      console.log('📅 Evento de todo el día:', JSON.stringify(eventToCreate, null, 2));
     }
 
     const response = await calendar.events.insert({
       calendarId: 'primary',
-      requestBody: event,
+      requestBody: eventToCreate,
     });
 
     console.log('✅ Evento creado con ID:', response.data.id);
@@ -201,10 +201,14 @@ export async function createCalendarEvent(
     return response.data.id;
   } catch (error: any) {
     console.error('❌ Error al crear evento en Google Calendar:');
-    console.error('Error completo:', JSON.stringify(error, null, 2));
     console.error('Error message:', error?.message);
-    console.error('Error response:', error?.response?.data);
-    console.error('Error config:', error?.config);
+    console.error('Error status:', error?.response?.status);
+    console.error('Error statusText:', error?.response?.statusText);
+    console.error('Error data:', JSON.stringify(error?.response?.data, null, 2));
+
+    // Loguear detalles del evento que intentamos crear
+    console.error('Evento que causó el error:', JSON.stringify(eventToCreate, null, 2));
+
     throw error;
   }
 }
