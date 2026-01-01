@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,50 +23,26 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const result = await signIn('credentials', {
+      const supabase = createClient();
+
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password,
-        redirect: false,
-        callbackUrl: '/',
       });
 
-      console.log('Login result:', result);
-
-      if (result?.error) {
-        console.error('Login error:', result.error);
-        toast.error('Credenciales inválidas');
+      if (error) {
+        console.error('Login error:', error);
+        toast.error(error.message === 'Invalid login credentials'
+          ? 'Credenciales inválidas'
+          : 'Error al iniciar sesión');
         setIsLoading(false);
-      } else if (result?.ok) {
-        console.log('✅ Login exitoso');
+        return;
+      }
+
+      if (data.user) {
         toast.success('Bienvenido de vuelta!');
-
-        // Esperar más tiempo para que la cookie se establezca completamente
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // Verificar que la sesión esté disponible antes de redirigir
-        try {
-          const sessionCheck = await fetch('/api/auth/session');
-          const sessionData = await sessionCheck.json();
-          console.log('Session data:', sessionData);
-
-          if (sessionData?.user) {
-            console.log('✅ Sesión verificada, redirigiendo...');
-            const redirectUrl = result.url || '/';
-            window.location.href = redirectUrl;
-          } else {
-            console.error('❌ Sesión no encontrada después del login');
-            toast.error('Error: Sesión no establecida. Por favor, intenta de nuevo.');
-            setIsLoading(false);
-          }
-        } catch (sessionError) {
-          console.error('❌ Error verificando sesión:', sessionError);
-          toast.error('Error al verificar la sesión');
-          setIsLoading(false);
-        }
-      } else {
-        console.error('Unexpected login result:', result);
-        toast.error('Error al iniciar sesión');
-        setIsLoading(false);
+        router.push('/');
+        router.refresh();
       }
     } catch (error) {
       console.error('Login exception:', error);

@@ -1,19 +1,21 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { createClient } from '@/lib/supabase/server';
 import { userHasCalendarAccess } from '@/lib/google-calendar';
 
 export async function GET() {
   try {
-    const session = await auth();
+    const supabase = await createClient();
 
-    if (!session || !session.user) {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
       return NextResponse.json(
         { error: 'No autenticado' },
         { status: 401 }
       );
     }
 
-    const hasAccess = await userHasCalendarAccess(session.user.id);
+    const hasAccess = await userHasCalendarAccess(user.id);
 
     return NextResponse.json({ connected: hasAccess });
   } catch (error) {

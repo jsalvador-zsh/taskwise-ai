@@ -12,6 +12,9 @@ export interface Task {
   due_date: string | null;
   time: string | null;
   google_calendar_event_id: string | null;
+  user_id: string;
+  assigned_to: string | null;
+  assigned_to_email?: string | null;
   completed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -24,6 +27,7 @@ export interface CreateTaskInput {
   priority?: TaskPriority;
   due_date?: string;
   time?: string;
+  assigned_to?: string; // UUID del usuario asignado
 }
 
 export interface UpdateTaskInput {
@@ -33,6 +37,7 @@ export interface UpdateTaskInput {
   priority?: TaskPriority;
   due_date?: string;
   time?: string;
+  assigned_to?: string; // UUID del usuario asignado
 }
 
 export interface ApiResponse<T = any> {

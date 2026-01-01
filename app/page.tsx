@@ -9,24 +9,28 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut, Calendar, Settings } from 'lucide-react';
-import { useSession, signOut } from 'next-auth/react';
+import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut, Calendar, Settings, LayoutGrid, List, User, Edit, FileText, Target, AlertTriangle, CalendarDays, Mail } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useSocket } from '@/hooks/useSocket';
+import { createClient } from '@/lib/supabase/client';
+import type { User } from '@supabase/supabase-js';
 
 // Función helper para parsear fechas tipo 'date' sin conversión UTC
 function parseLocalDate(dateString: string | null): Date | null {
   if (!dateString) return null;
 
   try {
-    const [year, month, day] = dateString.split('-').map(Number);
+    // Extraer solo la parte de la fecha si viene en formato ISO completo
+    const datePart = dateString.split('T')[0];
+    const [year, month, day] = datePart.split('-').map(Number);
 
     // Validar que todos los valores sean números válidos
     if (isNaN(year) || isNaN(month) || isNaN(day)) {
-      console.error('Invalid date components:', { year, month, day, dateString });
       return null;
     }
 
@@ -34,20 +38,18 @@ function parseLocalDate(dateString: string | null): Date | null {
 
     // Verificar que la fecha sea válida
     if (isNaN(date.getTime())) {
-      console.error('Invalid date created:', dateString);
       return null;
     }
 
     return date;
   } catch (error) {
-    console.error('Error parsing date:', dateString, error);
     return null;
   }
 }
 
 export default function TasksPage() {
-  const { data: session, status } = useSession();
   const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -58,6 +60,7 @@ export default function TasksPage() {
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [calendarAccount, setCalendarAccount] = useState<{ email: string; summary: string } | null>(null);
   const [loadingCalendarInfo, setLoadingCalendarInfo] = useState(false);
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
 
   // Formulario
   const [formData, setFormData] = useState({
@@ -67,35 +70,38 @@ export default function TasksPage() {
     priority: 'medium' as TaskPriority,
     due_date: '',
     time: '',
+    assigned_to: '',
   });
 
-  // Redirigir a login si no está autenticado
-  useEffect(() => {
-    if (status === 'unauthenticated') {
-      router.push('/login');
-    }
-  }, [status, router]);
+  // Lista de usuarios disponibles para asignación
+  const [availableUsers, setAvailableUsers] = useState<Array<{ id: string; email: string; full_name: string | null }>>([]);
 
-  // Socket.io para actualizaciones en tiempo real
-  useSocket(
-    // onTaskCreated
-    (task: Task) => {
-      setTasks((prevTasks) => [task, ...prevTasks]);
-      toast.success('Nueva tarea creada');
-    },
-    // onTaskUpdated
-    (task: Task) => {
-      setTasks((prevTasks) =>
-        prevTasks.map((t) => (t.id === task.id ? task : t))
-      );
-      toast.info('Tarea actualizada');
-    },
-    // onTaskDeleted
-    (data: { id: string }) => {
-      setTasks((prevTasks) => prevTasks.filter((t) => t.id !== data.id));
-      toast.info('Tarea eliminada');
-    }
-  );
+  // Verificar autenticación con Supabase
+  useEffect(() => {
+    const supabase = createClient();
+
+    const checkUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+      } else {
+        setUser(user);
+      }
+    };
+
+    checkUser();
+
+    // Suscribirse a cambios de autenticación
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        router.push('/login');
+      } else {
+        setUser(session.user);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [router]);
 
   // Cargar tareas
   const loadTasks = async () => {
@@ -116,10 +122,93 @@ export default function TasksPage() {
     }
   };
 
+  // Cargar usuarios disponibles para asignación
+  const loadUsers = async () => {
+    try {
+      const response = await fetch('/api/users');
+      const result = await response.json();
+
+      if (result.success) {
+        setAvailableUsers(result.data);
+      }
+    } catch (error) {
+      console.error('Error al cargar usuarios:', error);
+    }
+  };
+
   useEffect(() => {
-    loadTasks();
-    checkCalendarStatus();
-  }, []);
+    if (user) {
+      loadTasks();
+      checkCalendarStatus();
+      loadUsers();
+    }
+  }, [user]);
+
+  // Supabase Realtime - Suscribirse a cambios en tareas
+  useEffect(() => {
+    if (!user) return;
+
+    const supabase = createClient();
+
+    // Handler para eventos de tareas
+    const handleTaskEvent = (payload: any, isAssigned: boolean = false) => {
+      console.log('Realtime event:', payload);
+
+      if (payload.eventType === 'INSERT') {
+        setTasks((prev) => {
+          // Evitar duplicados
+          if (prev.some(t => t.id === payload.new.id)) return prev;
+          return [payload.new as Task, ...prev];
+        });
+        toast.success(isAssigned ? 'Te han asignado una nueva tarea' : 'Nueva tarea creada');
+      } else if (payload.eventType === 'UPDATE') {
+        setTasks((prev) =>
+          prev.map((task) =>
+            task.id === payload.new.id ? (payload.new as Task) : task
+          )
+        );
+        toast.info('Tarea actualizada');
+      } else if (payload.eventType === 'DELETE') {
+        setTasks((prev) => prev.filter((task) => task.id !== payload.old.id));
+        toast.info('Tarea eliminada');
+      }
+    };
+
+    // Suscripción para tareas creadas por el usuario
+    const channelOwned = supabase
+      .channel('tasks-owned')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tasks',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => handleTaskEvent(payload, false)
+      )
+      .subscribe();
+
+    // Suscripción para tareas asignadas al usuario
+    const channelAssigned = supabase
+      .channel('tasks-assigned')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tasks',
+          filter: `assigned_to=eq.${user.id}`,
+        },
+        (payload) => handleTaskEvent(payload, true)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channelOwned);
+      supabase.removeChannel(channelAssigned);
+    };
+  }, [user]);
 
   // Verificar estado de conexión con Google Calendar
   const checkCalendarStatus = async () => {
@@ -303,6 +392,7 @@ export default function TasksPage() {
       priority: 'medium',
       due_date: '',
       time: '',
+      assigned_to: '',
     });
   };
 
@@ -376,16 +466,35 @@ export default function TasksPage() {
     }
   };
 
-  if (status === 'loading' || loading) {
+  // Obtener color de borde según la prioridad
+  const getPriorityBorderColor = (priority: TaskPriority): string => {
+    switch (priority) {
+      case 'urgent':
+        return '#dc2626'; // red-600
+      case 'high':
+        return '#ea580c'; // orange-600
+      case 'medium':
+        return '#2563eb'; // blue-600
+      case 'low':
+        return '#9ca3af'; // gray-400
+      default:
+        return '#e5e7eb'; // gray-200
+    }
+  };
+
+  // Obtener nombre del usuario asignado
+  const getUserName = (userId: string | null): string => {
+    if (!userId) return '';
+    const foundUser = availableUsers.find(u => u.id === userId);
+    return foundUser?.full_name || foundUser?.email || 'Usuario';
+  };
+
+  if (!user || loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-lg text-muted-foreground">Cargando...</p>
       </div>
     );
-  }
-
-  if (!session) {
-    return null;
   }
 
   return (
@@ -394,11 +503,11 @@ export default function TasksPage() {
       <div className="flex items-center justify-between mb-6 pb-4 border-b">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold">
-            {session.user?.name?.[0]?.toUpperCase() || session.user?.email?.[0]?.toUpperCase() || 'U'}
+            {user?.email?.[0]?.toUpperCase() || 'U'}
           </div>
           <div>
-            <p className="font-medium">{session.user?.name || 'Usuario'}</p>
-            <p className="text-sm text-muted-foreground">{session.user?.email}</p>
+            <p className="font-medium">Usuario</p>
+            <p className="text-sm text-muted-foreground">{user?.email}</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -412,7 +521,11 @@ export default function TasksPage() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => signOut({ callbackUrl: '/login' })}
+            onClick={async () => {
+              const supabase = createClient();
+              await supabase.auth.signOut();
+              router.push('/login');
+            }}
             className="gap-2"
           >
             <LogOut className="w-4 h-4" />
@@ -432,6 +545,31 @@ export default function TasksPage() {
         </Button>
       </div>
 
+      {/* Toggle de vistas */}
+      {tasks.length > 0 && (
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-semibold">Mis Tareas</h2>
+          <div className="flex gap-2">
+            <Button
+              variant={viewMode === 'card' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('card')}
+            >
+              <LayoutGrid className="h-4 w-4 mr-2" />
+              Tarjetas
+            </Button>
+            <Button
+              variant={viewMode === 'list' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('list')}
+            >
+              <List className="h-4 w-4 mr-2" />
+              Lista
+            </Button>
+          </div>
+        </div>
+      )}
+
       {tasks.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -442,236 +580,619 @@ export default function TasksPage() {
             </Button>
           </CardContent>
         </Card>
-      ) : (
+      ) : viewMode === 'card' ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {tasks.map((task) => (
-            <Card key={task.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <CardTitle className="text-xl mb-2">{task.title}</CardTitle>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs border ${getStatusColor(task.status)}`}>
+            <Card
+              key={task.id}
+              className="hover:shadow-lg transition-all border-l-4"
+              style={{borderLeftColor: getPriorityBorderColor(task.priority)}}
+            >
+              <CardHeader className="pb-3">
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <CardTitle className="text-lg mb-2 truncate">{task.title}</CardTitle>
+                    <div className="flex gap-2 flex-wrap">
+                      <Badge className={getStatusColor(task.status)}>
                         {getStatusIcon(task.status)}
-                        {getStatusText(task.status)}
-                      </span>
-                      <span className={`text-xs ${getPriorityColor(task.priority)}`}>
+                        <span className="ml-1">{getStatusText(task.status)}</span>
+                      </Badge>
+                      <Badge variant="outline" className={getPriorityColor(task.priority)}>
                         {getPriorityText(task.priority)}
-                      </span>
+                      </Badge>
                     </div>
                   </div>
-                  <div className="flex gap-1 ml-2">
-                    <Button variant="ghost" size="icon" onClick={() => openEditDialog(task)}>
-                      <Pencil className="w-4 h-4" />
+                  <div className="flex gap-1 flex-shrink-0">
+                    <Button size="icon" variant="ghost" onClick={() => openEditDialog(task)}>
+                      <Edit className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => handleDelete(task.id)}>
-                      <Trash2 className="w-4 h-4" />
+                    <Button size="icon" variant="ghost" onClick={() => handleDelete(task.id)}>
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
                 {task.description && (
-                  <CardDescription className="mb-3 line-clamp-3">{task.description}</CardDescription>
-                )}
-                {task.due_date && (() => {
-                  const parsedDate = parseLocalDate(task.due_date);
-                  if (!parsedDate) return null;
-                  return (
-                    <p className="text-sm text-muted-foreground">
-                      Vencimiento: {format(parsedDate, 'dd MMM yyyy', { locale: es })}
-                      {task.time && ` a las ${task.time}`}
-                    </p>
-                  );
-                })()}
-                {task.google_calendar_event_id && (
-                  <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
-                    <span>📅</span> Sincronizado con Google Calendar
+                  <p className="text-sm text-muted-foreground line-clamp-2">
+                    {task.description}
                   </p>
                 )}
-                <p className="text-xs text-muted-foreground mt-2">
-                  Creada: {format(new Date(task.created_at), 'dd MMM yyyy HH:mm', { locale: es })}
-                </p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  {task.due_date && (() => {
+                    const parsedDate = parseLocalDate(task.due_date);
+                    if (!parsedDate) return null;
+                    return (
+                      <div className="flex items-center gap-2 col-span-2">
+                        <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <span className="truncate">
+                          {format(parsedDate, 'dd MMM yyyy', { locale: es })}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  {task.time && (
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <span>{task.time}</span>
+                    </div>
+                  )}
+                  {task.assigned_to && (
+                    <div className="flex items-center gap-2 col-span-2">
+                      <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <span className="text-sm truncate">
+                        Asignada a: {getUserName(task.assigned_to)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                {task.google_calendar_event_id && (
+                  <div className="flex items-center gap-1 text-xs text-green-600">
+                    <CheckCircle2 className="h-3 w-3 flex-shrink-0" />
+                    <span>Sincronizada con Google Calendar</span>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Tarea</TableHead>
+                <TableHead>Estado</TableHead>
+                <TableHead>Prioridad</TableHead>
+                <TableHead>Vencimiento</TableHead>
+                <TableHead>Hora</TableHead>
+                <TableHead>Asignado a</TableHead>
+                <TableHead className="text-right">Acciones</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tasks.map((task) => (
+                <TableRow key={task.id} className="hover:bg-muted/50">
+                  <TableCell>
+                    <div className="min-w-[200px]">
+                      <p className="font-medium">{task.title}</p>
+                      {task.description && (
+                        <p className="text-sm text-muted-foreground line-clamp-1">
+                          {task.description}
+                        </p>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge className={getStatusColor(task.status)}>
+                      {getStatusText(task.status)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className={getPriorityColor(task.priority)}>
+                      {getPriorityText(task.priority)}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    {task.due_date ? (() => {
+                      const parsedDate = parseLocalDate(task.due_date);
+                      if (!parsedDate) return '-';
+                      return format(parsedDate, 'dd MMM yyyy', { locale: es });
+                    })() : '-'}
+                  </TableCell>
+                  <TableCell>{task.time || '-'}</TableCell>
+                  <TableCell>{getUserName(task.assigned_to) || '-'}</TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-1">
+                      <Button size="icon" variant="ghost" onClick={() => openEditDialog(task)}>
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button size="icon" variant="ghost" onClick={() => handleDelete(task.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
 
       {/* Diálogo de crear tarea */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Crear Nueva Tarea</DialogTitle>
-            <DialogDescription>Completa los campos para crear una nueva tarea</DialogDescription>
+            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+              <Plus className="h-6 w-6 text-primary" />
+              Crear Nueva Tarea
+            </DialogTitle>
+            <DialogDescription>Completa la información para crear una nueva tarea</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="title">Título *</Label>
-              <Input
-                id="title"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                placeholder="Título de la tarea"
-              />
-            </div>
-            <div>
-              <Label htmlFor="description">Descripción</Label>
-              <Textarea
-                id="description"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="Descripción de la tarea"
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="status">Estado</Label>
-                <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value as TaskStatus })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pending">Pendiente</SelectItem>
-                    <SelectItem value="in_progress">En progreso</SelectItem>
-                    <SelectItem value="completed">Completada</SelectItem>
-                    <SelectItem value="cancelled">Cancelada</SelectItem>
-                  </SelectContent>
-                </Select>
+
+          <div className="space-y-6 py-4">
+            {/* Información Básica */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <FileText className="h-4 w-4" />
+                <span>INFORMACIÓN BÁSICA</span>
               </div>
-              <div>
-                <Label htmlFor="priority">Prioridad</Label>
-                <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value as TaskPriority })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Baja</SelectItem>
-                    <SelectItem value="medium">Media</SelectItem>
-                    <SelectItem value="high">Alta</SelectItem>
-                    <SelectItem value="urgent">Urgente</SelectItem>
-                  </SelectContent>
-                </Select>
+
+              <div className="space-y-4 pl-6">
+                <div className="space-y-2">
+                  <Label htmlFor="title" className="text-sm font-medium flex items-center gap-2">
+                    <span>Título</span>
+                    <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="title"
+                    value={formData.title}
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    placeholder="Ej: Revisar propuesta de proyecto..."
+                    className="text-base"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="description" className="text-sm font-medium">Descripción</Label>
+                  <Textarea
+                    id="description"
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    placeholder="Agrega detalles sobre la tarea..."
+                    rows={3}
+                    className="resize-none"
+                  />
+                </div>
               </div>
             </div>
-            <div>
-              <Label htmlFor="due_date">Fecha de vencimiento</Label>
-              <Input
-                id="due_date"
-                type="date"
-                value={formData.due_date}
-                onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-              />
+
+            <Separator />
+
+            {/* Clasificación */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <Target className="h-4 w-4" />
+                <span>CLASIFICACIÓN</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 pl-6">
+                <div className="space-y-2">
+                  <Label htmlFor="status" className="text-sm font-medium flex items-center gap-2">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Estado
+                  </Label>
+                  <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value as TaskStatus })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-gray-500" />
+                          Pendiente
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="in_progress">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          En progreso
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="completed">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-green-500" />
+                          Completada
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="cancelled">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-red-500" />
+                          Cancelada
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="priority" className="text-sm font-medium flex items-center gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Prioridad
+                  </Label>
+                  <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value as TaskPriority })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-gray-400" />
+                          Baja
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="medium">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          Media
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="high">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-orange-500" />
+                          Alta
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="urgent">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-red-600" />
+                          Urgente
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
-            <div>
-              <Label htmlFor="time">Hora (opcional)</Label>
-              <Input
-                id="time"
-                type="time"
-                value={formData.time}
-                onChange={(e) => setFormData({ ...formData, time: e.target.value })}
-                placeholder="HH:MM"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Se creará un evento de 1 hora en Google Calendar si está conectado
-              </p>
+
+            <Separator />
+
+            {/* Programación */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <CalendarDays className="h-4 w-4" />
+                <span>PROGRAMACIÓN</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 pl-6">
+                <div className="space-y-2">
+                  <Label htmlFor="due_date" className="text-sm font-medium flex items-center gap-2">
+                    <Calendar className="h-3.5 w-3.5" />
+                    Fecha de vencimiento
+                  </Label>
+                  <Input
+                    id="due_date"
+                    type="date"
+                    value={formData.due_date}
+                    onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                    className="text-base"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="time" className="text-sm font-medium flex items-center gap-2">
+                    <Clock className="h-3.5 w-3.5" />
+                    Hora
+                  </Label>
+                  <Input
+                    id="time"
+                    type="time"
+                    value={formData.time}
+                    onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+                    placeholder="HH:MM"
+                    className="text-base"
+                  />
+                </div>
+              </div>
+
+              <div className="pl-6">
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <CheckCircle2 className="h-3 w-3" />
+                  Se creará un evento de 1 hora en Google Calendar si está conectado
+                </p>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Asignación */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <User className="h-4 w-4" />
+                <span>ASIGNACIÓN</span>
+              </div>
+
+              <div className="space-y-2 pl-6">
+                <Label htmlFor="assigned_to" className="text-sm font-medium flex items-center gap-2">
+                  <Mail className="h-3.5 w-3.5" />
+                  Asignar a usuario
+                </Label>
+                <Select value={formData.assigned_to || "none"} onValueChange={(value) => setFormData({ ...formData, assigned_to: value === "none" ? "" : value })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar usuario (opcional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      <div className="flex items-center gap-2">
+                        <User className="h-3.5 w-3.5 text-muted-foreground" />
+                        Sin asignar
+                      </div>
+                    </SelectItem>
+                    {availableUsers.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        <div className="flex items-center gap-2">
+                          <User className="h-3.5 w-3.5" />
+                          {user.full_name || user.email}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Mail className="h-3 w-3" />
+                  Se enviará una notificación por email al usuario asignado
+                </p>
+              </div>
             </div>
           </div>
-          <DialogFooter>
+
+          <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => { setIsCreateDialogOpen(false); resetForm(); }}>
               Cancelar
             </Button>
-            <Button onClick={handleCreate}>Crear Tarea</Button>
+            <Button onClick={handleCreate} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Crear Tarea
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Diálogo de editar tarea */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Editar Tarea</DialogTitle>
-            <DialogDescription>Modifica los campos de la tarea</DialogDescription>
+            <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+              <Edit className="h-6 w-6 text-primary" />
+              Editar Tarea
+            </DialogTitle>
+            <DialogDescription>Modifica la información de la tarea</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="edit-title">Título *</Label>
-              <Input
-                id="edit-title"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                placeholder="Título de la tarea"
-              />
-            </div>
-            <div>
-              <Label htmlFor="edit-description">Descripción</Label>
-              <Textarea
-                id="edit-description"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="Descripción de la tarea"
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="edit-status">Estado</Label>
-                <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value as TaskStatus })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pending">Pendiente</SelectItem>
-                    <SelectItem value="in_progress">En progreso</SelectItem>
-                    <SelectItem value="completed">Completada</SelectItem>
-                    <SelectItem value="cancelled">Cancelada</SelectItem>
-                  </SelectContent>
-                </Select>
+
+          <div className="space-y-6 py-4">
+            {/* Información Básica */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <FileText className="h-4 w-4" />
+                <span>INFORMACIÓN BÁSICA</span>
               </div>
-              <div>
-                <Label htmlFor="edit-priority">Prioridad</Label>
-                <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value as TaskPriority })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Baja</SelectItem>
-                    <SelectItem value="medium">Media</SelectItem>
-                    <SelectItem value="high">Alta</SelectItem>
-                    <SelectItem value="urgent">Urgente</SelectItem>
-                  </SelectContent>
-                </Select>
+
+              <div className="space-y-4 pl-6">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-title" className="text-sm font-medium flex items-center gap-2">
+                    <span>Título</span>
+                    <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="edit-title"
+                    value={formData.title}
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    placeholder="Ej: Revisar propuesta de proyecto..."
+                    className="text-base"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-description" className="text-sm font-medium">Descripción</Label>
+                  <Textarea
+                    id="edit-description"
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    placeholder="Agrega detalles sobre la tarea..."
+                    rows={3}
+                    className="resize-none"
+                  />
+                </div>
               </div>
             </div>
-            <div>
-              <Label htmlFor="edit-due_date">Fecha de vencimiento</Label>
-              <Input
-                id="edit-due_date"
-                type="date"
-                value={formData.due_date}
-                onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-              />
+
+            <Separator />
+
+            {/* Clasificación */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <Target className="h-4 w-4" />
+                <span>CLASIFICACIÓN</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 pl-6">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-status" className="text-sm font-medium flex items-center gap-2">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Estado
+                  </Label>
+                  <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value as TaskStatus })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-gray-500" />
+                          Pendiente
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="in_progress">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          En progreso
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="completed">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-green-500" />
+                          Completada
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="cancelled">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-red-500" />
+                          Cancelada
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-priority" className="text-sm font-medium flex items-center gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Prioridad
+                  </Label>
+                  <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value as TaskPriority })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-gray-400" />
+                          Baja
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="medium">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          Media
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="high">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-orange-500" />
+                          Alta
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="urgent">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-red-600" />
+                          Urgente
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
-            <div>
-              <Label htmlFor="edit-time">Hora (opcional)</Label>
-              <Input
-                id="edit-time"
-                type="time"
-                value={formData.time}
-                onChange={(e) => setFormData({ ...formData, time: e.target.value })}
-                placeholder="HH:MM"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Se actualizará el evento en Google Calendar si está conectado
-              </p>
+
+            <Separator />
+
+            {/* Programación */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <CalendarDays className="h-4 w-4" />
+                <span>PROGRAMACIÓN</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 pl-6">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-due_date" className="text-sm font-medium flex items-center gap-2">
+                    <Calendar className="h-3.5 w-3.5" />
+                    Fecha de vencimiento
+                  </Label>
+                  <Input
+                    id="edit-due_date"
+                    type="date"
+                    value={formData.due_date}
+                    onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                    className="text-base"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-time" className="text-sm font-medium flex items-center gap-2">
+                    <Clock className="h-3.5 w-3.5" />
+                    Hora
+                  </Label>
+                  <Input
+                    id="edit-time"
+                    type="time"
+                    value={formData.time}
+                    onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+                    placeholder="HH:MM"
+                    className="text-base"
+                  />
+                </div>
+              </div>
+
+              <div className="pl-6">
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <CheckCircle2 className="h-3 w-3" />
+                  Se actualizará el evento en Google Calendar si está conectado
+                </p>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Asignación */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <User className="h-4 w-4" />
+                <span>ASIGNACIÓN</span>
+              </div>
+
+              <div className="space-y-2 pl-6">
+                <Label htmlFor="edit-assigned_to" className="text-sm font-medium flex items-center gap-2">
+                  <Mail className="h-3.5 w-3.5" />
+                  Asignar a usuario
+                </Label>
+                <Select value={formData.assigned_to || "none"} onValueChange={(value) => setFormData({ ...formData, assigned_to: value === "none" ? "" : value })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar usuario (opcional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      <div className="flex items-center gap-2">
+                        <User className="h-3.5 w-3.5 text-muted-foreground" />
+                        Sin asignar
+                      </div>
+                    </SelectItem>
+                    {availableUsers.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        <div className="flex items-center gap-2">
+                          <User className="h-3.5 w-3.5" />
+                          {user.full_name || user.email}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Mail className="h-3 w-3" />
+                  Se enviará una notificación por email al usuario asignado
+                </p>
+              </div>
             </div>
           </div>
-          <DialogFooter>
+
+          <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => { setIsEditDialogOpen(false); setEditingTask(null); resetForm(); }}>
               Cancelar
             </Button>
-            <Button onClick={handleUpdate}>Guardar Cambios</Button>
+            <Button onClick={handleUpdate} className="gap-2">
+              <CheckCircle2 className="h-4 w-4" />
+              Guardar Cambios
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

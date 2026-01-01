@@ -1,11 +1,19 @@
 import { google } from 'googleapis';
-import { pool } from './db';
+import { createClient } from '@supabase/supabase-js';
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  `${process.env.NEXTAUTH_URL}/api/google-calendar/callback`
+  `${process.env.NEXT_PUBLIC_APP_URL}/api/google-calendar/callback`
 );
+
+// Cliente Supabase con service_role para acceso desde server
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 // Obtener URL de autorización
 export function getAuthUrl() {
@@ -37,32 +45,43 @@ export async function saveUserTokens(
   expiryDate: number,
   scope: string
 ) {
-  await pool.query(
-    `INSERT INTO google_calendar_tokens (user_id, access_token, refresh_token, token_expiry, scope)
-     VALUES ($1, $2, $3, to_timestamp($4/1000.0), $5)
-     ON CONFLICT (user_id)
-     DO UPDATE SET
-       access_token = $2,
-       refresh_token = $3,
-       token_expiry = to_timestamp($4/1000.0),
-       scope = $5,
-       updated_at = CURRENT_TIMESTAMP`,
-    [userId, accessToken, refreshToken, expiryDate, scope]
-  );
+  const supabase = getSupabaseAdmin();
+
+  const tokenExpiry = new Date(expiryDate).toISOString();
+
+  const { error } = await supabase
+    .from('google_calendar_tokens')
+    .upsert({
+      user_id: userId,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_expiry: tokenExpiry,
+      scope: scope,
+    }, {
+      onConflict: 'user_id'
+    });
+
+  if (error) {
+    console.error('Error saving Google Calendar tokens:', error);
+    throw error;
+  }
 }
 
 // Obtener tokens del usuario
 export async function getUserTokens(userId: string) {
-  const result = await pool.query(
-    'SELECT access_token, refresh_token, token_expiry FROM google_calendar_tokens WHERE user_id = $1',
-    [userId]
-  );
+  const supabase = getSupabaseAdmin();
 
-  if (result.rows.length === 0) {
+  const { data, error } = await supabase
+    .from('google_calendar_tokens')
+    .select('access_token, refresh_token, token_expiry')
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !data) {
     return null;
   }
 
-  return result.rows[0];
+  return data;
 }
 
 // Crear cliente de Calendar autenticado

@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { createClient } from '@/lib/supabase/server';
 import { getTokensFromCode, saveUserTokens } from '@/lib/google-calendar';
 
 export async function GET(request: Request) {
   try {
-    const session = await auth();
+    const supabase = await createClient();
 
-    if (!session || !session.user) {
-      return NextResponse.redirect(new URL('/login', request.url));
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.redirect(new URL('/auth/login', request.url));
     }
 
     const { searchParams } = new URL(request.url);
@@ -39,9 +41,9 @@ export async function GET(request: Request) {
     }
 
     // Guardar tokens en la base de datos
-    console.log('💾 Guardando tokens en la base de datos para usuario:', session.user.id);
+    console.log('💾 Guardando tokens en la base de datos para usuario:', user.id);
     await saveUserTokens(
-      session.user.id,
+      user.id,
       tokens.access_token,
       tokens.refresh_token,
       tokens.expiry_date || Date.now() + 3600000,

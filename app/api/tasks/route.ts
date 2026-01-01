@@ -1,30 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
 import { CreateTaskInput, ApiResponse, Task } from '@/lib/types';
-import { auth } from '@/lib/auth';
-import { emitTaskEvent } from '@/lib/socket-helper';
+import { createClient } from '@/lib/supabase/server';
 import { createCalendarEvent, userHasCalendarAccess } from '@/lib/google-calendar';
+import { sendTaskAssignmentEmail } from '@/lib/email-sender';
 
 // GET /api/tasks - Obtener todas las tareas del usuario autenticado
 export async function GET() {
   try {
-    const session = await auth();
+    const supabase = await createClient();
 
-    if (!session?.user?.id) {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
       return NextResponse.json(
         { success: false, error: 'No autenticado' },
         { status: 401 }
       );
     }
 
-    const result = await pool.query(
-      'SELECT * FROM tasks WHERE user_id = $1 ORDER BY created_at DESC',
-      [session.user.id]
-    );
+    // Supabase RLS automáticamente filtra por user_id y assigned_to
+    const { data: tasks, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error al obtener tareas:', error);
+      return NextResponse.json(
+        { success: false, error: 'Error al obtener las tareas' },
+        { status: 500 }
+      );
+    }
 
     const response: ApiResponse<Task[]> = {
       success: true,
-      data: result.rows,
+      data: tasks || [],
     };
 
     return NextResponse.json(response);
@@ -43,9 +53,11 @@ export async function GET() {
 // POST /api/tasks - Crear una nueva tarea
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth();
+    const supabase = await createClient();
 
-    if (!session?.user?.id) {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
       return NextResponse.json(
         { success: false, error: 'No autenticado' },
         { status: 401 }
@@ -54,57 +66,97 @@ export async function POST(request: NextRequest) {
 
     const body: CreateTaskInput = await request.json();
 
-    // Debug: Ver qué valores llegan del frontend
     console.log('📝 Datos recibidos para crear tarea:', {
       title: body.title,
       due_date: body.due_date,
       time: body.time,
-      due_date_type: typeof body.due_date
+      assigned_to: body.assigned_to,
     });
 
     // Validación básica
     if (!body.title || body.title.trim() === '') {
-      const response: ApiResponse = {
-        success: false,
-        error: 'El título es requerido',
-      };
-      return NextResponse.json(response, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: 'El título es requerido' },
+        { status: 400 }
+      );
     }
 
-    const result = await pool.query(
-      `INSERT INTO tasks (title, description, status, priority, due_date, time, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
-      [
-        body.title,
-        body.description || null,
-        body.status || 'pending',
-        body.priority || 'medium',
-        body.due_date || null,
-        body.time || null,
-        session.user.id,
-      ]
-    );
+    const { data: newTask, error } = await supabase
+      .from('tasks')
+      .insert({
+        title: body.title,
+        description: body.description || null,
+        status: body.status || 'pending',
+        priority: body.priority || 'medium',
+        due_date: body.due_date || null,
+        time: body.time || null,
+        user_id: user.id,
+        assigned_to: body.assigned_to || null,
+      })
+      .select()
+      .single();
 
-    const newTask = result.rows[0];
+    if (error) {
+      console.error('Error al crear tarea:', error);
+      return NextResponse.json(
+        { success: false, error: 'Error al crear la tarea' },
+        { status: 500 }
+      );
+    }
 
-    // Debug: Ver qué se guardó en la base de datos
     console.log('💾 Tarea guardada en DB:', {
       id: newTask.id,
       title: newTask.title,
       due_date: newTask.due_date,
       time: newTask.time,
-      due_date_type: typeof newTask.due_date
+      assigned_to: newTask.assigned_to,
     });
+
+    // Enviar notificación por email si la tarea fue asignada
+    if (newTask.assigned_to) {
+      try {
+        // Obtener los perfiles del creador y del asignado
+        const { data: creatorProfile } = await supabase
+          .from('profiles')
+          .select('full_name, email')
+          .eq('id', user.id)
+          .single();
+
+        const { data: assignedProfile } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('id', newTask.assigned_to)
+          .single();
+
+        if (assignedProfile?.email) {
+          const assignedBy = creatorProfile?.full_name || creatorProfile?.email || 'Un usuario';
+          const taskUrl = `${process.env.NEXT_PUBLIC_APP_URL}`;
+
+          await sendTaskAssignmentEmail({
+            to: assignedProfile.email,
+            taskTitle: newTask.title,
+            taskDescription: newTask.description || undefined,
+            dueDate: newTask.due_date || undefined,
+            assignedBy,
+            taskUrl,
+          });
+
+          console.log('✅ Email de asignación enviado a:', assignedProfile.email);
+        }
+      } catch (emailError) {
+        console.error('❌ Error al enviar email de asignación:', emailError);
+        // No fallar la creación de la tarea si falla el envío del email
+      }
+    }
 
     // Sincronizar con Google Calendar si el usuario tiene acceso
     if (newTask.due_date) {
       try {
-        const hasCalendarAccess = await userHasCalendarAccess(session.user.id);
+        const hasCalendarAccess = await userHasCalendarAccess(user.id);
 
         if (hasCalendarAccess) {
           const eventId = await createCalendarEvent(
-            session.user.id,
+            user.id,
             newTask.title,
             newTask.description || '',
             newTask.due_date,
@@ -112,25 +164,21 @@ export async function POST(request: NextRequest) {
           );
 
           // Actualizar la tarea con el ID del evento de Google Calendar
-          await pool.query(
-            'UPDATE tasks SET google_calendar_event_id = $1 WHERE id = $2',
-            [eventId, newTask.id]
-          );
+          const { error: updateError } = await supabase
+            .from('tasks')
+            .update({ google_calendar_event_id: eventId })
+            .eq('id', newTask.id);
 
-          newTask.google_calendar_event_id = eventId;
-          console.log('✅ Evento sincronizado correctamente con ID:', eventId);
+          if (!updateError) {
+            newTask.google_calendar_event_id = eventId;
+            console.log('✅ Evento sincronizado correctamente con ID:', eventId);
+          }
         }
       } catch (calendarError: any) {
-        console.error('❌ Error al sincronizar con Google Calendar:');
-        console.error('Error message:', calendarError?.message);
-        console.error('Error details:', calendarError?.response?.data);
-        console.error('Error status:', calendarError?.status || calendarError?.code);
+        console.error('❌ Error al sincronizar con Google Calendar:', calendarError?.message);
         // No fallar la creación de la tarea si falla la sincronización
       }
     }
-
-    // Emitir evento de Socket.io
-    emitTaskEvent(session.user.id, 'task:created', newTask);
 
     const response: ApiResponse<Task> = {
       success: true,
