@@ -152,9 +152,12 @@ export async function POST(request: NextRequest) {
     // Sincronizar con Google Calendar si el usuario tiene acceso
     if (newTask.due_date) {
       try {
+        console.log('📅 Verificando acceso a Google Calendar para usuario:', user.id);
         const hasCalendarAccess = await userHasCalendarAccess(user.id);
+        console.log('📅 ¿Tiene acceso a Calendar?:', hasCalendarAccess);
 
         if (hasCalendarAccess) {
+          console.log('📅 Creando evento en Google Calendar...');
           const eventId = await createCalendarEvent(
             user.id,
             newTask.title,
@@ -162,6 +165,8 @@ export async function POST(request: NextRequest) {
             newTask.due_date,
             newTask.time
           );
+
+          console.log('📅 Evento creado con ID:', eventId);
 
           // Actualizar la tarea con el ID del evento de Google Calendar
           const { error: updateError } = await supabase
@@ -172,12 +177,19 @@ export async function POST(request: NextRequest) {
           if (!updateError) {
             newTask.google_calendar_event_id = eventId;
             console.log('✅ Evento sincronizado correctamente con ID:', eventId);
+          } else {
+            console.error('❌ Error al actualizar tarea con event_id:', updateError);
           }
+        } else {
+          console.log('⚠️ Usuario no tiene acceso a Google Calendar');
         }
       } catch (calendarError: any) {
         console.error('❌ Error al sincronizar con Google Calendar:', calendarError?.message);
+        console.error('❌ Stack trace:', calendarError?.stack);
         // No fallar la creación de la tarea si falla la sincronización
       }
+    } else {
+      console.log('⚠️ Tarea sin fecha de vencimiento, no se sincroniza con Calendar');
     }
 
     const response: ApiResponse<Task> = {
