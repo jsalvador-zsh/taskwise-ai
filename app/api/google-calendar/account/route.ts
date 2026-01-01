@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { createClient } from '@/lib/supabase/server';
 import { getCalendarClient } from '@/lib/google-calendar';
 
 // GET /api/google-calendar/account - Obtener información de la cuenta conectada
 export async function GET() {
   try {
-    const session = await auth();
+    const supabase = await createClient();
 
-    if (!session?.user?.id) {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
       return NextResponse.json(
         { success: false, error: 'No autenticado' },
         { status: 401 }
@@ -15,7 +17,7 @@ export async function GET() {
     }
 
     try {
-      const calendar = await getCalendarClient(session.user.id);
+      const calendar = await getCalendarClient(user.id);
 
       // Obtener información del perfil del usuario de Google
       const response = await calendar.calendarList.get({

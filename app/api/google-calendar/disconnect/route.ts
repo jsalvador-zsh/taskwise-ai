@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
-import { pool } from '@/lib/db';
+import { createClient } from '@/lib/supabase/server';
 
 // DELETE /api/google-calendar/disconnect - Desconectar Google Calendar
 export async function DELETE() {
   try {
-    const session = await auth();
+    const supabase = await createClient();
 
-    if (!session?.user?.id) {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
       return NextResponse.json(
         { success: false, error: 'No autenticado' },
         { status: 401 }
@@ -15,16 +16,16 @@ export async function DELETE() {
     }
 
     // Eliminar tokens de Google Calendar del usuario
-    await pool.query(
-      'DELETE FROM google_calendar_tokens WHERE user_id = $1',
-      [session.user.id]
-    );
+    await supabase
+      .from('google_calendar_tokens')
+      .delete()
+      .eq('user_id', user.id);
 
     // Opcional: Eliminar google_calendar_event_id de todas las tareas
-    await pool.query(
-      'UPDATE tasks SET google_calendar_event_id = NULL WHERE user_id = $1',
-      [session.user.id]
-    );
+    await supabase
+      .from('tasks')
+      .update({ google_calendar_event_id: null })
+      .eq('user_id', user.id);
 
     return NextResponse.json({
       success: true,
