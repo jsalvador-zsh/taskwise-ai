@@ -129,7 +129,7 @@ export async function createCalendarEvent(
   date: Date | string,
   time?: string | null
 ) {
-  console.log('🚀 VERSION 2.0 - createCalendarEvent INICIADO');
+  console.log('🚀 VERSION 3.0 - createCalendarEvent INICIADO');
   let eventToCreate: any;
 
   try {
@@ -137,11 +137,12 @@ export async function createCalendarEvent(
 
     console.log('📅 Creando evento en Google Calendar:', { date, time, dateType: typeof date });
 
-    // Parsear fecha
+    // Parsear fecha - puede venir como string "2025-11-17" o timestamp "2026-01-03T00:00:00+00:00"
     let dateStr: string;
 
     if (typeof date === 'string') {
-      dateStr = date; // "2025-11-17"
+      // Extraer solo la parte de fecha YYYY-MM-DD
+      dateStr = date.split('T')[0]; // "2026-01-03T00:00:00+00:00" → "2026-01-03"
     } else {
       // Convertir Date a string YYYY-MM-DD en zona horaria local
       const year = date.getFullYear();
@@ -150,14 +151,24 @@ export async function createCalendarEvent(
       dateStr = `${year}-${month}-${day}`;
     }
 
+    // Parsear time - puede venir como "14:42" o "14:42:00"
+    let timeStr: string | null = null;
+    if (time) {
+      // Extraer solo HH:mm (sin segundos)
+      const timeParts = time.split(':');
+      timeStr = `${timeParts[0]}:${timeParts[1]}`; // "14:42:00" → "14:42"
+    }
+
+    console.log('📅 Fecha parseada:', dateStr, 'Hora parseada:', timeStr);
+
     // Si hay hora específica, crear evento con dateTime
     // Si no hay hora, crear evento de todo el día con date
-    if (time) {
+    if (timeStr) {
       // Evento con hora específica
-      const dateTimeStr = `${dateStr}T${time}:00`;
+      const dateTimeStr = `${dateStr}T${timeStr}:00`;
 
       // Calcular la hora de fin (1 hora después)
-      const [hours, minutes] = time.split(':').map(Number);
+      const [hours, minutes] = timeStr.split(':').map(Number);
       const endHours = hours + 1;
       const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
       const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
@@ -228,11 +239,12 @@ export async function updateCalendarEvent(
 
     console.log('📅 Actualizando evento en Google Calendar:', { eventId, date, time, dateType: typeof date });
 
-    // Parsear fecha
+    // Parsear fecha - puede venir como string "2025-11-17" o timestamp "2026-01-03T00:00:00+00:00"
     let dateStr: string;
 
     if (typeof date === 'string') {
-      dateStr = date; // "2025-11-17"
+      // Extraer solo la parte de fecha YYYY-MM-DD
+      dateStr = date.split('T')[0]; // "2026-01-03T00:00:00+00:00" → "2026-01-03"
     } else {
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -240,16 +252,24 @@ export async function updateCalendarEvent(
       dateStr = `${year}-${month}-${day}`;
     }
 
+    // Parsear time - puede venir como "14:42" o "14:42:00"
+    let timeStr: string | null = null;
+    if (time) {
+      // Extraer solo HH:mm (sin segundos)
+      const timeParts = time.split(':');
+      timeStr = `${timeParts[0]}:${timeParts[1]}`; // "14:42:00" → "14:42"
+    }
+
     let event: any;
 
     // Si hay hora específica, crear evento con dateTime
     // Si no hay hora, crear evento de todo el día con date
-    if (time) {
+    if (timeStr) {
       // Evento con hora específica
-      const dateTimeStr = `${dateStr}T${time}:00`;
+      const dateTimeStr = `${dateStr}T${timeStr}:00`;
 
       // Calcular la hora de fin (1 hora después)
-      const [hours, minutes] = time.split(':').map(Number);
+      const [hours, minutes] = timeStr.split(':').map(Number);
       const endHours = hours + 1;
       const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
       const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
