@@ -70,14 +70,11 @@ export default function LoginPage() {
 
       <Card className="w-full max-w-md shadow-2xl border-emerald-100 relative z-10 backdrop-blur-sm bg-white/95">
         <CardHeader className="space-y-3 pb-6">
-          <div className="mx-auto w-16 h-16 bg-linear-to-br from-emerald-500 to-teal-600 rounded-2xl flex items-center justify-center shadow-lg transform transition-transform hover:scale-110">
-            <LogIn className="h-8 w-8 text-white" />
-          </div>
           <CardTitle className="text-3xl font-bold text-center bg-linear-to-r from-emerald-700 to-teal-700 bg-clip-text text-transparent">
-            Bienvenido de vuelta
+            Bienvenido
           </CardTitle>
           <CardDescription className="text-center text-base text-gray-600">
-            Ingresa tus credenciales para acceder a TaskWise
+            Ingresa tus credenciales para acceder a tu cuenta
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
