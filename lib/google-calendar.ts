@@ -129,6 +129,7 @@ export async function createCalendarEvent(
   date: Date | string,
   time?: string | null
 ) {
+  console.log('🚀 VERSION 2.0 - createCalendarEvent INICIADO');
   let eventToCreate: any;
 
   try {
