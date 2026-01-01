@@ -127,16 +127,15 @@ export async function createCalendarEvent(
   title: string,
   description: string,
   date: Date | string,
-  time?: string
+  time?: string | null
 ) {
   try {
     const calendar = await getCalendarClient(userId);
 
     console.log('📅 Creando evento en Google Calendar:', { date, time, dateType: typeof date });
 
-    // Parsear fecha y hora
+    // Parsear fecha
     let dateStr: string;
-    let timeStr: string;
 
     if (typeof date === 'string') {
       dateStr = date; // "2025-11-17"
@@ -148,34 +147,49 @@ export async function createCalendarEvent(
       dateStr = `${year}-${month}-${day}`;
     }
 
-    timeStr = time || '09:00';
+    let event: any;
 
-    // Construir la fecha/hora en formato ISO pero interpretada en America/Lima
-    // Formato: "2025-11-17T09:00:00" (sin Z para que se interprete en la zona horaria especificada)
-    const dateTimeStr = `${dateStr}T${timeStr}:00`;
+    // Si hay hora específica, crear evento con dateTime
+    // Si no hay hora, crear evento de todo el día con date
+    if (time) {
+      // Evento con hora específica
+      const dateTimeStr = `${dateStr}T${time}:00`;
 
-    console.log('📅 DateTime string para Google Calendar:', dateTimeStr);
+      // Calcular la hora de fin (1 hora después)
+      const [hours, minutes] = time.split(':').map(Number);
+      const endHours = hours + 1;
+      const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
 
-    // Calcular la hora de fin (1 hora después)
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const endHours = hours + 1;
-    const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-    const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
+      event = {
+        summary: title,
+        description: description || undefined,
+        start: {
+          dateTime: dateTimeStr,
+          timeZone: 'America/Lima',
+        },
+        end: {
+          dateTime: endDateTimeStr,
+          timeZone: 'America/Lima',
+        },
+      };
 
-    const event = {
-      summary: title,
-      description: description || undefined,
-      start: {
-        dateTime: dateTimeStr,
-        timeZone: 'America/Lima',
-      },
-      end: {
-        dateTime: endDateTimeStr,
-        timeZone: 'America/Lima',
-      },
-    };
+      console.log('📅 Evento con hora específica:', JSON.stringify(event, null, 2));
+    } else {
+      // Evento de todo el día (sin hora)
+      event = {
+        summary: title,
+        description: description || undefined,
+        start: {
+          date: dateStr,
+        },
+        end: {
+          date: dateStr,
+        },
+      };
 
-    console.log('📅 Evento a crear:', JSON.stringify(event, null, 2));
+      console.log('📅 Evento de todo el día:', JSON.stringify(event, null, 2));
+    }
 
     const response = await calendar.events.insert({
       calendarId: 'primary',
@@ -202,16 +216,15 @@ export async function updateCalendarEvent(
   title: string,
   description: string,
   date: Date | string,
-  time?: string
+  time?: string | null
 ) {
   try {
     const calendar = await getCalendarClient(userId);
 
     console.log('📅 Actualizando evento en Google Calendar:', { eventId, date, time, dateType: typeof date });
 
-    // Parsear fecha y hora
+    // Parsear fecha
     let dateStr: string;
-    let timeStr: string;
 
     if (typeof date === 'string') {
       dateStr = date; // "2025-11-17"
@@ -222,31 +235,49 @@ export async function updateCalendarEvent(
       dateStr = `${year}-${month}-${day}`;
     }
 
-    timeStr = time || '09:00';
+    let event: any;
 
-    // Construir la fecha/hora en formato ISO interpretada en America/Lima
-    const dateTimeStr = `${dateStr}T${timeStr}:00`;
+    // Si hay hora específica, crear evento con dateTime
+    // Si no hay hora, crear evento de todo el día con date
+    if (time) {
+      // Evento con hora específica
+      const dateTimeStr = `${dateStr}T${time}:00`;
 
-    // Calcular la hora de fin (1 hora después)
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const endHours = hours + 1;
-    const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-    const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
+      // Calcular la hora de fin (1 hora después)
+      const [hours, minutes] = time.split(':').map(Number);
+      const endHours = hours + 1;
+      const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
 
-    const event = {
-      summary: title,
-      description: description || undefined,
-      start: {
-        dateTime: dateTimeStr,
-        timeZone: 'America/Lima',
-      },
-      end: {
-        dateTime: endDateTimeStr,
-        timeZone: 'America/Lima',
-      },
-    };
+      event = {
+        summary: title,
+        description: description || undefined,
+        start: {
+          dateTime: dateTimeStr,
+          timeZone: 'America/Lima',
+        },
+        end: {
+          dateTime: endDateTimeStr,
+          timeZone: 'America/Lima',
+        },
+      };
 
-    console.log('📅 Evento a actualizar:', JSON.stringify(event, null, 2));
+      console.log('📅 Evento con hora específica a actualizar:', JSON.stringify(event, null, 2));
+    } else {
+      // Evento de todo el día (sin hora)
+      event = {
+        summary: title,
+        description: description || undefined,
+        start: {
+          date: dateStr,
+        },
+        end: {
+          date: dateStr,
+        },
+      };
+
+      console.log('📅 Evento de todo el día a actualizar:', JSON.stringify(event, null, 2));
+    }
 
     await calendar.events.update({
       calendarId: 'primary',
