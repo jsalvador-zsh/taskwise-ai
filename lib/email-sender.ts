@@ -1,6 +1,7 @@
 import { Resend } from 'resend';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Resend es opcional - solo se inicializa si hay API key
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 interface SendTaskAssignmentEmailParams {
   to: string;
@@ -19,6 +20,12 @@ export async function sendTaskAssignmentEmail({
   assignedBy,
   taskUrl,
 }: SendTaskAssignmentEmailParams) {
+  // Si no hay Resend configurado, solo loguear y retornar éxito
+  if (!resend) {
+    console.log('⚠️ Resend no configurado. Email no enviado a:', to);
+    return { success: true, data: null, skipped: true };
+  }
+
   try {
     const { data, error } = await resend.emails.send({
       from: 'TaskWise <onboarding@resend.dev>', // Cambia esto cuando tengas tu dominio
