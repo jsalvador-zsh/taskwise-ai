@@ -24,23 +24,23 @@ export default function ResetPasswordPage() {
   useEffect(() => {
     const supabase = createClient();
 
-    // Supabase maneja el token del enlace automáticamente via el listener de auth
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
+    // El callback ya estableció la sesión — verificamos que exista y sea de tipo recovery
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
         setIsValidSession(true);
       }
       setIsChecking(false);
     });
 
-    // Timeout por si el evento no llega
-    const timeout = setTimeout(() => {
-      setIsChecking(false);
-    }, 3000);
+    // También escuchamos el evento por si el usuario llega directamente con token en hash (flujo implícito)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') {
+        setIsValidSession(true);
+        setIsChecking(false);
+      }
+    });
 
-    return () => {
-      subscription.unsubscribe();
-      clearTimeout(timeout);
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
