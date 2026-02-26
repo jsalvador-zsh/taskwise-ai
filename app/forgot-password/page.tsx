@@ -27,7 +27,11 @@ export default function ForgotPasswordPage() {
       });
 
       if (error) {
-        toast.error('Error al enviar el correo. Verifica la dirección e inténtalo de nuevo.');
+        if (error.status === 429 || error.message?.toLowerCase().includes('rate limit')) {
+          toast.error('Demasiados intentos. Espera unos minutos antes de volver a intentarlo.');
+        } else {
+          toast.error('Error al enviar el correo. Verifica la dirección e inténtalo de nuevo.');
+        }
         setIsLoading(false);
         return;
       }
