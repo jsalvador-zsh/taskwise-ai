@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Task, TaskStatus, TaskPriority } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,10 +15,38 @@ import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut, Calendar, Settings, LayoutGrid, List, User, Edit, FileText, Target, AlertTriangle, CalendarDays, Mail } from 'lucide-react';
+import { Plus, Pencil, Trash2, CheckCircle2, Clock, AlertCircle, LogOut, Calendar, Settings, LayoutGrid, List, User, Edit, FileText, Target, AlertTriangle, CalendarDays, Mail, Kanban as KanbanIcon, Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import type { User } from '@supabase/supabase-js';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
+
+// Nuevos componentes
+import { TaskCard } from '@/components/TaskCard';
+import { TaskFilters } from '@/components/TaskFilters';
+import { KanbanBoard } from '@/components/KanbanBoard';
+import { ProductivityAnalytics } from '@/components/ProductivityAnalytics';
+import { ActivityLog } from '@/components/ActivityLog';
+import { cn } from '@/lib/utils';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger
+} from '@/components/ui/tabs';
+import {
+  ScrollArea
+} from '@/components/ui/scroll-area';
+import {
+  History,
+  RefreshCw,
+  BarChart3,
+  LayoutDashboard,
+  CalendarCheck,
+  MoreVertical,
+  Repeat,
+  ChevronDown
+} from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 
 // Función helper para parsear fechas tipo 'date' sin conversión UTC
 function parseLocalDate(dateString: string | null): Date | null {
@@ -49,7 +77,7 @@ function parseLocalDate(dateString: string | null): Date | null {
 
 export default function TasksPage() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -60,7 +88,27 @@ export default function TasksPage() {
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [calendarAccount, setCalendarAccount] = useState<{ email: string; summary: string } | null>(null);
   const [loadingCalendarInfo, setLoadingCalendarInfo] = useState(false);
-  const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
+  const [viewMode, setViewMode] = useState<'card' | 'list' | 'kanban'>('kanban');
+
+  // Estados para filtros
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+
+  // Estados para nuevas funcionalidades
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [isActivityLogOpen, setIsActivityLogOpen] = useState(false);
+  const [activeActivityTaskId, setActiveActivityTaskId] = useState<string | null>(null);
+  const [isRecurringMode, setIsRecurringMode] = useState(false);
+
+  // Estado para recurrencia en el formulario
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrenceData, setRecurrenceData] = useState({
+    frequency: 'daily' as 'daily' | 'weekly' | 'monthly',
+    interval: 1,
+    day_of_week: 0,
+    day_of_month: 1
+  });
 
   // Formulario
   const [formData, setFormData] = useState({
@@ -110,7 +158,7 @@ export default function TasksPage() {
       const result = await response.json();
 
       if (result.success) {
-        setTasks(result.data);
+        setTasks(result.data || []);
       } else {
         toast.error(result.error || 'Error al cargar tareas');
       }
@@ -129,20 +177,51 @@ export default function TasksPage() {
       const result = await response.json();
 
       if (result.success) {
-        setAvailableUsers(result.data);
+        setAvailableUsers(result.data || []);
       }
     } catch (error) {
       console.error('Error al cargar usuarios:', error);
     }
   };
 
+  const [recurringConfigs, setRecurringConfigs] = useState<any[]>([]);
+  const [processingRecurrence, setProcessingRecurrence] = useState(false);
+
   useEffect(() => {
     if (user) {
       loadTasks();
       checkCalendarStatus();
       loadUsers();
+      loadRecurringConfigs(); // Cargar configuraciones al inicio
     }
   }, [user]);
+
+  const loadRecurringConfigs = async () => {
+    try {
+      const response = await fetch('/api/recurring-tasks');
+      const result = await response.json();
+      if (result.success) setRecurringConfigs(result.data || []);
+    } catch (error) {
+      console.error('Error al cargar recurrencias:', error);
+    }
+  };
+
+  const processRecurringTasks = async () => {
+    setProcessingRecurrence(true);
+    try {
+      const response = await fetch('/api/recurring-tasks', { method: 'POST' });
+      const result = await response.json();
+      if (result.success) {
+        toast.success(result.message);
+        loadTasks(); // Recargar tareas si se generaron nuevas
+        loadRecurringConfigs(); // Actualizar fechas
+      }
+    } catch (error) {
+      toast.error('Error al procesar automatizaciones');
+    } finally {
+      setProcessingRecurrence(false);
+    }
+  };
 
   // Supabase Realtime - Suscribirse a cambios en tareas
   useEffect(() => {
@@ -297,7 +376,11 @@ export default function TasksPage() {
       const response = await fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          is_recurring: isRecurring,
+          recurrence_data: isRecurring ? recurrenceData : undefined
+        }),
       });
 
       const result = await response.json();
@@ -379,6 +462,7 @@ export default function TasksPage() {
       priority: task.priority,
       due_date: task.due_date || '', // Ya está en formato yyyy-MM-dd, no necesita conversión
       time: task.time || '',
+      assigned_to: task.assigned_to || '',
     });
     setIsEditDialogOpen(true);
   };
@@ -394,6 +478,13 @@ export default function TasksPage() {
       time: '',
       assigned_to: '',
     });
+    setIsRecurring(false);
+    setRecurrenceData({
+      frequency: 'daily',
+      interval: 1,
+      day_of_week: 0,
+      day_of_month: 1
+    });
   };
 
   // Obtener color según el estado
@@ -402,7 +493,7 @@ export default function TasksPage() {
       case 'completed':
         return 'bg-green-100 text-green-800 border-green-300';
       case 'in_progress':
-        return 'bg-blue-100 text-blue-800 border-blue-300';
+        return 'bg-teal-100 text-teal-800 border-teal-300';
       case 'cancelled':
         return 'bg-gray-100 text-gray-800 border-gray-300';
       default:
@@ -448,7 +539,7 @@ export default function TasksPage() {
       case 'low':
         return 'text-gray-500';
       default:
-        return 'text-blue-600';
+        return 'text-teal-600';
     }
   };
 
@@ -466,20 +557,51 @@ export default function TasksPage() {
     }
   };
 
-  // Obtener color de borde según la prioridad
-  const getPriorityBorderColor = (priority: TaskPriority): string => {
-    switch (priority) {
-      case 'urgent':
-        return '#dc2626'; // red-600
-      case 'high':
-        return '#ea580c'; // orange-600
-      case 'medium':
-        return '#2563eb'; // blue-600
-      case 'low':
-        return '#9ca3af'; // gray-400
-      default:
-        return '#e5e7eb'; // gray-200
+  // Lógica de filtrado de tareas
+  const filteredTasks = useMemo(() => {
+    return tasks.filter(task => {
+      const matchesSearch =
+        task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (task.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
+
+      const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
+      const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
+
+      return matchesSearch && matchesStatus && matchesPriority;
+    });
+  }, [tasks, searchQuery, statusFilter, priorityFilter]);
+
+  // Handler para mover tareas en Kanban
+  const handleTaskMove = async (taskId: string, newStatus: TaskStatus) => {
+    // Actualización optimista de la UI
+    const originalTasks = [...tasks];
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+
+    try {
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      const result = await response.json();
+      if (!result.success) {
+        setTasks(originalTasks);
+        toast.error('Error al actualizar el estado');
+      } else {
+        toast.success(`Tarea movida a ${getStatusText(newStatus)}`);
+      }
+    } catch (error) {
+      setTasks(originalTasks);
+      toast.error('Error de red al actualizar');
     }
+  };
+
+  // Abrir diálogo de creación con estado predefinido
+  const openCreateWithStatus = (status: TaskStatus) => {
+    resetForm();
+    setFormData(prev => ({ ...prev, status }));
+    setIsCreateDialogOpen(true);
   };
 
   // Obtener nombre del usuario asignado
@@ -491,233 +613,421 @@ export default function TasksPage() {
 
   if (!user || loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-lg text-muted-foreground">Cargando...</p>
+      <div className="flex items-center justify-center min-h-screen bg-white">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm font-bold text-slate-500 animate-pulse">Cargando Taskwise AI...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto py-8 px-4 max-w-6xl">
-      {/* Header con usuario y logout */}
-      <div className="flex items-center justify-between mb-6 pb-4 border-b">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold">
-            {user?.email?.[0]?.toUpperCase() || 'U'}
+    <div className="flex flex-col h-screen bg-slate-50/30 overflow-hidden">
+      {/* Navbar Superior */}
+      <header className="h-16 border-b bg-white/80 backdrop-blur-md px-6 flex items-center justify-between shrink-0 z-20">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-emerald-600 rounded-lg shadow-lg shadow-emerald-200">
+              <Sparkles className="h-5 w-5 text-white" />
+            </div>
+            <h1 className="text-xl font-black tracking-tight text-slate-900 uppercase">Taskwise <span className="text-emerald-600">AI</span></h1>
           </div>
-          <div>
-            <p className="font-medium">Usuario</p>
-            <p className="text-sm text-muted-foreground">{user?.email}</p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={openSettingsDialog}
-            className="gap-2"
-          >
-            <Settings className="w-4 h-4" />
-            Configuración
-          </Button>
-          <Button
-            variant="outline"
-            onClick={async () => {
-              const supabase = createClient();
-              await supabase.auth.signOut();
-              router.push('/login');
-            }}
-            className="gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            Cerrar Sesión
-          </Button>
-        </div>
-      </div>
 
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-4xl font-bold">Gestor de Tareas</h1>
-          <p className="text-muted-foreground mt-2">Administra tus tareas de forma simple y eficiente</p>
-        </div>
-        <Button onClick={() => setIsCreateDialogOpen(true)} size="lg">
-          <Plus className="w-5 h-5 mr-2" />
-          Nueva Tarea
-        </Button>
-      </div>
+          <Separator orientation="vertical" className="h-6" />
 
-      {/* Toggle de vistas */}
-      {tasks.length > 0 && (
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-semibold">Mis Tareas</h2>
-          <div className="flex gap-2">
+          <nav className="flex items-center gap-1">
             <Button
-              variant={viewMode === 'card' ? 'default' : 'outline'}
+              variant={!isRecurringMode ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setViewMode('card')}
+              className="rounded-lg font-bold text-xs px-4"
+              onClick={() => setIsRecurringMode(false)}
             >
-              <LayoutGrid className="h-4 w-4 mr-2" />
-              Tarjetas
+              <LayoutDashboard className="w-4 h-4 mr-2" />
+              Tablero
             </Button>
             <Button
-              variant={viewMode === 'list' ? 'default' : 'outline'}
+              variant={isRecurringMode ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setViewMode('list')}
+              className="rounded-lg font-bold text-xs px-4"
+              onClick={() => setIsRecurringMode(true)}
             >
-              <List className="h-4 w-4 mr-2" />
-              Lista
+              <Repeat className="w-4 h-4 mr-2" />
+              Recurrentes
+            </Button>
+          </nav>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 px-3 py-1.5 border rounded-xl bg-slate-50">
+            <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shadow-inner">
+              {user?.email?.[0]?.toUpperCase() || 'U'}
+            </div>
+            <div className="hidden sm:block">
+              <p className="text-xs font-bold text-slate-900 leading-none mb-0.5 truncate max-w-[120px]">
+                {user?.email?.split('@')[0]}
+              </p>
+              <p className="text-[10px] text-slate-500 font-medium leading-none truncate max-w-[120px]">
+                {user?.email}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-1">
+            <Button variant="ghost" size="icon" onClick={openSettingsDialog} className="rounded-xl h-10 w-10 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50">
+              <Settings className="w-5 h-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={async () => {
+                const supabase = createClient();
+                await supabase.auth.signOut();
+                router.push('/login');
+              }}
+              className="rounded-xl h-10 w-10 text-slate-500 hover:text-rose-600 hover:bg-rose-50"
+            >
+              <LogOut className="w-5 h-5" />
             </Button>
           </div>
         </div>
-      )}
+      </header>
 
-      {tasks.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <p className="text-lg text-muted-foreground mb-4">No tienes tareas creadas</p>
-            <Button onClick={() => setIsCreateDialogOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Crear primera tarea
-            </Button>
-          </CardContent>
-        </Card>
-      ) : viewMode === 'card' ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {tasks.map((task) => (
-            <Card
-              key={task.id}
-              className="hover:shadow-lg transition-all border-l-4"
-              style={{borderLeftColor: getPriorityBorderColor(task.priority)}}
-            >
-              <CardHeader className="pb-3">
-                <div className="flex justify-between items-start gap-2">
-                  <div className="flex-1 min-w-0">
-                    <CardTitle className="text-lg mb-2 truncate">{task.title}</CardTitle>
-                    <div className="flex gap-2 flex-wrap">
-                      <Badge className={getStatusColor(task.status)}>
-                        {getStatusIcon(task.status)}
-                        <span className="ml-1">{getStatusText(task.status)}</span>
-                      </Badge>
-                      <Badge variant="outline" className={getPriorityColor(task.priority)}>
-                        {getPriorityText(task.priority)}
-                      </Badge>
-                    </div>
-                  </div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <Button size="icon" variant="ghost" onClick={() => openEditDialog(task)}>
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button size="icon" variant="ghost" onClick={() => handleDelete(task.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {task.description && (
-                  <p className="text-sm text-muted-foreground line-clamp-2">
-                    {task.description}
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-hidden flex flex-col">
+        <ScrollArea className="flex-1">
+          <div className="w-full max-w-[1700px] mx-auto p-8 pt-6">
+
+            {/* Cabecera / Analíticas */}
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+                    {isRecurringMode ? (
+                      <>
+                        <RefreshCw className="w-6 h-6 text-emerald-600" />
+                        Automatización de Tareas
+                      </>
+                    ) : (
+                      <>
+                        <LayoutDashboard className="w-6 h-6 text-emerald-600" />
+                        Mi Tablero de Productividad
+                      </>
+                    )}
+                  </h2>
+                  <p className="text-slate-500 text-sm font-medium">
+                    {isRecurringMode
+                      ? "Configura tareas que se crean automáticamente según un horario."
+                      : "Visualiza y gestiona todas tus actividades con un solo vistazo."}
                   </p>
-                )}
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  {task.due_date && (() => {
-                    const parsedDate = parseLocalDate(task.due_date);
-                    if (!parsedDate) return null;
-                    return (
-                      <div className="flex items-center gap-2 col-span-2">
-                        <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                        <span className="truncate">
-                          {format(parsedDate, 'dd MMM yyyy', { locale: es })}
-                        </span>
-                      </div>
-                    );
-                  })()}
-                  {task.time && (
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 bg-white px-3 py-1.5 border rounded-xl shadow-sm">
+                    <span className="text-xs font-bold text-slate-500">Métricas</span>
+                    <Switch
+                      checked={showAnalytics}
+                      onCheckedChange={setShowAnalytics}
+                      className="data-[state=checked]:bg-emerald-600"
+                    />
+                  </div>
+                  <Button
+                    onClick={() => setIsCreateDialogOpen(true)}
+                    className="rounded-xl bg-emerald-600 hover:bg-emerald-700 shadow-xl shadow-emerald-100 h-11 px-6 font-bold"
+                  >
+                    <Plus className="w-5 h-5 mr-1" />
+                    {isRecurringMode ? "Nueva Recurrencia" : "Nueva Tarea"}
+                  </Button>
+                </div>
+              </div>
+
+              {showAnalytics && !isRecurringMode && (
+                <div className="animate-in fade-in slide-in-from-top-4 duration-500">
+                  <ProductivityAnalytics tasks={tasks} />
+                </div>
+              )}
+            </div>
+
+            {!isRecurringMode ? (
+              <div className="flex flex-col gap-8">
+                {/* Controles y Filtros */}
+                <div className="bg-white/40 backdrop-blur-sm p-4 rounded-3xl border border-slate-200/60 flex flex-col gap-4">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Clock className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      <span>{task.time}</span>
+                      <LayoutGrid className="w-4 h-4 text-emerald-500" />
+                      <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Gestión de Tareas</h3>
                     </div>
-                  )}
-                  {task.assigned_to && (
-                    <div className="flex items-center gap-2 col-span-2">
-                      <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      <span className="text-sm truncate">
-                        Asignada a: {getUserName(task.assigned_to)}
-                      </span>
+                    <div className="bg-slate-200/50 p-1 rounded-xl flex gap-1">
+                      <Button
+                        variant={viewMode === 'kanban' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('kanban')}
+                        className={cn("rounded-lg h-8 px-4 text-xs font-bold", viewMode === 'kanban' && "bg-white text-emerald-600 shadow-sm hover:bg-white")}
+                      >
+                        Kanban
+                      </Button>
+                      <Button
+                        variant={viewMode === 'card' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('card')}
+                        className={cn("rounded-lg h-8 px-4 text-xs font-bold", viewMode === 'card' && "bg-white text-emerald-600 shadow-sm hover:bg-white")}
+                      >
+                        Cuadrícula
+                      </Button>
+                      <Button
+                        variant={viewMode === 'list' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('list')}
+                        className={cn("rounded-lg h-8 px-4 text-xs font-bold", viewMode === 'list' && "bg-white text-emerald-600 shadow-sm hover:bg-white")}
+                      >
+                        Lista
+                      </Button>
+                    </div>
+                  </div>
+
+                  <TaskFilters
+                    searchQuery={searchQuery}
+                    setSearchQuery={setSearchQuery}
+                    statusFilter={statusFilter}
+                    setStatusFilter={setStatusFilter}
+                    priorityFilter={priorityFilter}
+                    setPriorityFilter={setPriorityFilter}
+                    onClear={() => {
+                      setSearchQuery('');
+                      setStatusFilter('all');
+                      setPriorityFilter('all');
+                    }}
+                  />
+                </div>
+
+                {/* Contenido Dinámico */}
+                <div className="min-h-[500px]">
+                  {tasks.length === 0 && !loading ? (
+                    <Card className="border-dashed border-2 bg-slate-50/50 rounded-[40px] py-16">
+                      <CardContent className="flex flex-col items-center justify-center">
+                        <div className="w-20 h-20 bg-white rounded-3xl shadow-xl flex items-center justify-center mb-6">
+                          <FileText className="w-10 h-10 text-slate-200" />
+                        </div>
+                        <h3 className="text-2xl font-black text-slate-900 mb-2">Sin tareas todavía</h3>
+                        <p className="text-slate-500 mb-8 max-w-xs text-center font-medium">Empieza a organizar tu jornada creando tu primera tarea.</p>
+                        <Button onClick={() => setIsCreateDialogOpen(true)} className="rounded-2xl h-12 px-8 bg-emerald-600 font-bold">
+                          Crear primera tarea
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ) : filteredTasks.length === 0 ? (
+                    <div className="py-24 text-center bg-slate-50/50 rounded-[40px] border border-dashed border-slate-300">
+                      <p className="text-slate-500 font-bold text-lg">No hay coincidencias</p>
+                      <p className="text-slate-400 text-sm mt-1 mb-6">Prueba a usar otros términos o filtros.</p>
+                      <Button variant="outline" onClick={() => { setSearchQuery(''); setStatusFilter('all'); setPriorityFilter('all'); }} className="rounded-xl">
+                        Limpiar filtros
+                      </Button>
+                    </div>
+                  ) : viewMode === 'kanban' ? (
+                    <KanbanBoard
+                      tasks={filteredTasks}
+                      onTaskMove={handleTaskMove}
+                      onEdit={openEditDialog}
+                      onDelete={handleDelete}
+                      onAddTask={openCreateWithStatus}
+                      getUserName={getUserName}
+                      currentUserId={user?.id}
+                    />
+                  ) : viewMode === 'card' ? (
+                    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {filteredTasks.map((task) => (
+                        <TaskCard
+                          key={task.id}
+                          task={task}
+                          onEdit={openEditDialog}
+                          onDelete={handleDelete}
+                          getUserName={getUserName}
+                          currentUserId={user?.id}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200 rounded-[32px] overflow-hidden bg-white shadow-xl shadow-slate-200/50">
+                      <Table>
+                        <TableHeader className="bg-slate-50/80">
+                          <TableRow className="hover:bg-transparent border-b-2">
+                            <TableHead className="font-black text-slate-900 h-12">Actividad</TableHead>
+                            <TableHead className="font-black text-slate-900 h-12">Estado</TableHead>
+                            <TableHead className="font-black text-slate-900 h-12">Prioridad</TableHead>
+                            <TableHead className="font-black text-slate-900 h-12">Vencimiento</TableHead>
+                            <TableHead className="font-black text-slate-900 h-12">Responsable</TableHead>
+                            <TableHead className="text-right font-black text-slate-900 h-12">Acciones</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredTasks.map((task) => (
+                            <TableRow key={task.id} className="hover:bg-slate-50/50 transition-colors h-16">
+                              <TableCell>
+                                <div className="max-w-[300px]">
+                                  <p className="font-bold text-slate-900 truncate leading-tight">{task.title}</p>
+                                  {task.description && (
+                                    <p className="text-[10px] text-slate-400 line-clamp-1 italic mt-0.5">
+                                      {task.description}
+                                    </p>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <span className={cn(
+                                    "w-1.5 h-1.5 rounded-full ring-4 ring-opacity-20",
+                                    task.status === 'completed' ? "bg-emerald-500 ring-emerald-500" :
+                                      task.status === 'in_progress' ? "bg-teal-500 ring-teal-500" :
+                                        task.status === 'cancelled' ? "bg-slate-400 ring-slate-400" : "bg-amber-500 ring-amber-500"
+                                  )} />
+                                  <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">{getStatusText(task.status)}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span className={cn("text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-slate-100", getPriorityColor(task.priority))}>
+                                  {getPriorityText(task.priority)}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2 text-xs text-slate-500 font-bold">
+                                  <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                                  {task.due_date ? (() => {
+                                    const parsedDate = parseLocalDate(task.due_date);
+                                    if (!parsedDate) return '-';
+                                    return format(parsedDate, 'dd MMM yyyy', { locale: es });
+                                  })() : '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded-full bg-slate-100 border flex items-center justify-center">
+                                    <User className="w-3 h-3 text-slate-400" />
+                                  </div>
+                                  <span className="text-[11px] font-bold text-slate-700">{getUserName(task.assigned_to) || 'Yo'}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex justify-end gap-1">
+                                  <Button size="icon" variant="ghost" onClick={() => { setActiveActivityTaskId(task.id); setIsActivityLogOpen(true); }} className="h-8 w-8 text-slate-400 hover:text-emerald-600">
+                                    <History className="h-4 w-4" />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" onClick={() => openEditDialog(task)} className="h-8 w-8 text-slate-400 hover:text-emerald-600">
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" onClick={() => handleDelete(task.id)} className="h-8 w-8 text-slate-400 hover:text-rose-600">
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
                     </div>
                   )}
                 </div>
-                {task.google_calendar_event_id && (
-                  <div className="flex items-center gap-1 text-xs text-green-600">
-                    <CheckCircle2 className="h-3 w-3 flex-shrink-0" />
-                    <span>Sincronizada con Google Calendar</span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-6 animate-in slide-in-from-right-4 duration-500">
+                <div className="bg-emerald-600/5 backdrop-blur-sm p-6 rounded-[28px] border border-emerald-200/50 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center border border-emerald-100">
+                      <Repeat className="w-6 h-6 text-emerald-600 animate-spin-slow" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-emerald-900 uppercase">Motor de Recurrencia</h3>
+                      <p className="text-[11px] text-emerald-600 font-bold opacity-70">Detecta y genera tareas automáticamente.</p>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={processRecurringTasks}
+                    disabled={processingRecurrence}
+                    className="rounded-xl bg-emerald-600 font-bold h-10 px-5 shadow-lg shadow-emerald-100 flex items-center gap-2"
+                  >
+                    {processingRecurrence ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    Procesar Pendientes
+                  </Button>
+                </div>
+
+                {(recurringConfigs || []).length === 0 ? (
+                  <div className="bg-white/50 border border-slate-200 rounded-[40px] p-20 text-center">
+                    <div className="w-24 h-24 bg-emerald-50 rounded-[32px] flex items-center justify-center mx-auto mb-8">
+                      <Repeat className="w-12 h-12 text-emerald-600" />
+                    </div>
+                    <h2 className="text-3xl font-black text-slate-900 mb-4">Automatiza tu rutina</h2>
+                    <p className="text-slate-500 max-w-lg mx-auto mb-10 text-lg font-medium">Configura tareas repetitivas para que Taskwise AI las cree por ti automáticamente.</p>
+                    <Button onClick={() => setIsCreateDialogOpen(true)} className="rounded-2xl h-14 px-10 bg-emerald-600 text-lg font-bold shadow-2xl shadow-emerald-200">
+                      Crear Mi Primera Automatización
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {(recurringConfigs || []).map((config) => (
+                      <Card key={config.id} className="bg-white/70 backdrop-blur-sm border-slate-200/60 rounded-3xl overflow-hidden hover:shadow-xl hover:shadow-emerald-50 transition-all duration-300">
+                        <div className="h-1 w-full bg-emerald-500" />
+                        <CardContent className="p-6">
+                          <div className="flex items-center justify-between mb-4">
+                            <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">
+                              {config.frequency === 'daily' ? 'Diario' : config.frequency === 'weekly' ? 'Semanal' : 'Mensual'}
+                            </span>
+                            <span className={cn("text-[10px] font-black uppercase", config.is_active ? "text-emerald-600" : "text-slate-400")}>
+                              {config.is_active ? 'Activo' : 'Pausado'}
+                            </span>
+                          </div>
+                          <h4 className="font-black text-slate-900 mb-2 truncate">{config.title}</h4>
+                          <div className="space-y-3 mt-4">
+                            <div className="flex items-center justify-between text-[11px] font-bold">
+                              <span className="text-slate-400">Cada</span>
+                              <span className="text-slate-900">{config.recurrence_interval} {config.frequency === 'daily' ? 'días' : config.frequency === 'weekly' ? 'semanas' : 'meses'}</span>
+                            </div>
+                            <Separator className="bg-slate-100" />
+                            <div className="flex items-center justify-between text-[11px] font-bold">
+                              <span className="text-slate-400 flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                Próxima
+                              </span>
+                              <span className="text-emerald-600">
+                                {config.next_execution_at ? format(new Date(config.next_execution_at), "d 'de' MMM", { locale: es }) : '-'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-6 flex gap-2">
+                            <Button variant="outline" size="sm" className="flex-1 rounded-xl font-bold h-9">
+                              Editar
+                            </Button>
+                            <Button variant="ghost" size="icon" className="rounded-xl h-9 w-9 text-rose-500 hover:bg-rose-50">
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
                   </div>
                 )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Tarea</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Prioridad</TableHead>
-                <TableHead>Vencimiento</TableHead>
-                <TableHead>Hora</TableHead>
-                <TableHead>Asignado a</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {tasks.map((task) => (
-                <TableRow key={task.id} className="hover:bg-muted/50">
-                  <TableCell>
-                    <div className="min-w-[200px]">
-                      <p className="font-medium">{task.title}</p>
-                      {task.description && (
-                        <p className="text-sm text-muted-foreground line-clamp-1">
-                          {task.description}
-                        </p>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge className={getStatusColor(task.status)}>
-                      {getStatusText(task.status)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <span className={getPriorityColor(task.priority)}>
-                      {getPriorityText(task.priority)}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {task.due_date ? (() => {
-                      const parsedDate = parseLocalDate(task.due_date);
-                      if (!parsedDate) return '-';
-                      return format(parsedDate, 'dd MMM yyyy', { locale: es });
-                    })() : '-'}
-                  </TableCell>
-                  <TableCell>{task.time || '-'}</TableCell>
-                  <TableCell>{getUserName(task.assigned_to) || '-'}</TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button size="icon" variant="ghost" onClick={() => openEditDialog(task)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => handleDelete(task.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </main>
+
+      <Dialog open={isActivityLogOpen} onOpenChange={setIsActivityLogOpen}>
+        <DialogContent className="max-w-xl p-0 overflow-hidden rounded-3xl border-none shadow-2xl">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Historial de Actividad</DialogTitle>
+            <DialogDescription>
+              Consulta los cambios y actualizaciones realizados en esta tarea.
+            </DialogDescription>
+          </DialogHeader>
+          {activeActivityTaskId && <ActivityLog taskId={activeActivityTaskId} />}
+          <div className="p-4 bg-white border-t flex justify-end">
+            <Button onClick={() => setIsActivityLogOpen(false)} className="rounded-xl font-bold">Entendido</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Diálogo de crear tarea */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
@@ -795,7 +1105,7 @@ export default function TasksPage() {
                       </SelectItem>
                       <SelectItem value="in_progress">
                         <div className="flex items-center gap-2">
-                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          <div className="h-2 w-2 rounded-full bg-teal-500" />
                           En progreso
                         </div>
                       </SelectItem>
@@ -833,7 +1143,7 @@ export default function TasksPage() {
                       </SelectItem>
                       <SelectItem value="medium">
                         <div className="flex items-center gap-2">
-                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          <div className="h-2 w-2 rounded-full bg-teal-500" />
                           Media
                         </div>
                       </SelectItem>
@@ -1034,7 +1344,7 @@ export default function TasksPage() {
                       </SelectItem>
                       <SelectItem value="in_progress">
                         <div className="flex items-center gap-2">
-                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          <div className="h-2 w-2 rounded-full bg-teal-500" />
                           En progreso
                         </div>
                       </SelectItem>
@@ -1072,7 +1382,7 @@ export default function TasksPage() {
                       </SelectItem>
                       <SelectItem value="medium">
                         <div className="flex items-center gap-2">
-                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          <div className="h-2 w-2 rounded-full bg-teal-500" />
                           Media
                         </div>
                       </SelectItem>
@@ -1211,7 +1521,7 @@ export default function TasksPage() {
             {/* Sección de Google Calendar */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-blue-600" />
+                <Calendar className="w-5 h-5 text-teal-600" />
                 <h3 className="font-semibold text-lg">Google Calendar</h3>
               </div>
 

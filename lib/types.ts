@@ -18,6 +18,7 @@ export interface Task {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  recurring_config_id?: string | null;
 }
 
 export interface CreateTaskInput {
@@ -28,6 +29,13 @@ export interface CreateTaskInput {
   due_date?: string;
   time?: string;
   assigned_to?: string; // UUID del usuario asignado
+  is_recurring?: boolean;
+  recurrence_data?: {
+    frequency: 'daily' | 'weekly' | 'monthly';
+    interval: number;
+    day_of_week?: number;
+    day_of_month?: number;
+  };
 }
 
 export interface UpdateTaskInput {

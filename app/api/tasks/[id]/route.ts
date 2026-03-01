@@ -112,24 +112,60 @@ export async function PUT(
       );
     }
 
+    // Registrar actividades para los cambios realizados
+    const activities = [];
+    if (body.status !== undefined) {
+      activities.push({
+        task_id: id,
+        user_id: user.id,
+        activity_type: 'status_changed',
+        old_value: updatedTask.status === body.status ? 'N/A' : 'Anterior', // Sería ideal comparar con el valor previo real
+        new_value: body.status
+      });
+    }
+    if (body.priority !== undefined) {
+      activities.push({
+        task_id: id,
+        user_id: user.id,
+        activity_type: 'priority_changed',
+        new_value: body.priority
+      });
+    }
+
+    if (activities.length > 0) {
+      await supabase.from('task_activities').insert(activities);
+    }
+
     // Sincronizar con Google Calendar si existe un evento asociado
     if (updatedTask.google_calendar_event_id && updatedTask.due_date) {
       try {
-        const hasCalendarAccess = await userHasCalendarAccess(user.id);
+        // IMPORTANTE: Siempre usamos el user_id del CREADOR de la tarea para Calendar
+        const hasCalendarAccess = await userHasCalendarAccess(updatedTask.user_id);
 
         if (hasCalendarAccess) {
+          // Obtener email del asignado para mantener la invitación
+          const attendees = [];
+          if (updatedTask.assigned_to) {
+            const { data: assignedProf } = await supabase
+              .from('profiles')
+              .select('email')
+              .eq('id', updatedTask.assigned_to)
+              .single();
+            if (assignedProf?.email) attendees.push(assignedProf.email);
+          }
+
           await updateCalendarEvent(
-            user.id,
+            updatedTask.user_id,
             updatedTask.google_calendar_event_id,
             updatedTask.title,
             updatedTask.description || '',
             updatedTask.due_date,
-            updatedTask.time
+            updatedTask.time,
+            attendees
           );
         }
       } catch (calendarError) {
         console.error('Error al actualizar en Google Calendar:', calendarError);
-        // No fallar la actualización de la tarea si falla la sincronización
       }
     }
 
@@ -170,31 +206,36 @@ export async function DELETE(
 
     const { id } = await params;
 
-    // Primero obtener la tarea para verificar si tiene un evento de Google Calendar
+    // Obtener la tarea para verificar propiedad y Calendar
     const { data: task, error: fetchError } = await supabase
       .from('tasks')
-      .select('google_calendar_event_id')
+      .select('user_id, google_calendar_event_id')
       .eq('id', id)
       .single();
 
     if (fetchError || !task) {
+      return NextResponse.json({ success: false, error: 'Tarea no encontrada' }, { status: 404 });
+    }
+
+    // RESTRICT: Solo el creador puede borrar
+    if (task.user_id !== user.id) {
       return NextResponse.json(
-        { success: false, error: 'Tarea no encontrada' },
-        { status: 404 }
+        { success: false, error: 'Solo el creador original de la tarea puede eliminarla.' },
+        { status: 403 }
       );
     }
 
     // Eliminar de Google Calendar si existe un evento asociado
     if (task.google_calendar_event_id) {
       try {
-        const hasCalendarAccess = await userHasCalendarAccess(user.id);
+        // IMPORTANTE: Usamos el user_id del CREADOR (task.user_id)
+        const hasCalendarAccess = await userHasCalendarAccess(task.user_id);
 
         if (hasCalendarAccess) {
-          await deleteCalendarEvent(user.id, task.google_calendar_event_id);
+          await deleteCalendarEvent(task.user_id, task.google_calendar_event_id);
         }
       } catch (calendarError) {
         console.error('Error al eliminar de Google Calendar:', calendarError);
-        // No fallar la eliminación de la tarea si falla la sincronización
       }
     }
 

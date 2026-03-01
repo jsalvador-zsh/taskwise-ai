@@ -104,6 +104,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Registrar actividad de creación
+    await supabase.from('task_activities').insert({
+      task_id: newTask.id,
+      user_id: user.id,
+      activity_type: 'created',
+      new_value: newTask.title
+    });
+
+    // Manejar configuración recurrente si se solicita
+    if (body.is_recurring && body.recurrence_data) {
+      const { data: recConfig, error: recError } = await supabase
+        .from('recurring_configs')
+        .insert({
+          user_id: user.id,
+          title: newTask.title,
+          description: newTask.description,
+          priority: newTask.priority,
+          assigned_to: newTask.assigned_to,
+          frequency: body.recurrence_data.frequency,
+          recurrence_interval: body.recurrence_data.interval,
+          day_of_week: body.recurrence_data.day_of_week,
+          day_of_month: body.recurrence_data.day_of_month,
+          next_execution_at: new Date().toISOString() // Simplificado para este ejemplo
+        })
+        .select()
+        .single();
+
+      if (!recError && recConfig) {
+        await supabase
+          .from('tasks')
+          .update({ recurring_config_id: recConfig.id })
+          .eq('id', newTask.id);
+
+        newTask.recurring_config_id = recConfig.id;
+      }
+    }
+
     console.log('💾 Tarea guardada en DB:', {
       id: newTask.id,
       title: newTask.title,
@@ -157,13 +194,25 @@ export async function POST(request: NextRequest) {
         console.log('📅 ¿Tiene acceso a Calendar?:', hasCalendarAccess);
 
         if (hasCalendarAccess) {
-          console.log('📅 Creando evento en Google Calendar...');
+          // Obtener email del asignado para invitarlo
+          const attendees = [];
+          if (newTask.assigned_to) {
+            const { data: assignedProf } = await supabase
+              .from('profiles')
+              .select('email')
+              .eq('id', newTask.assigned_to)
+              .single();
+            if (assignedProf?.email) attendees.push(assignedProf.email);
+          }
+
+          console.log('📅 Creando evento en Google Calendar con asistentes:', attendees);
           const eventId = await createCalendarEvent(
             user.id,
             newTask.title,
             newTask.description || '',
             newTask.due_date,
-            newTask.time
+            newTask.time,
+            attendees
           );
 
           console.log('📅 Evento creado con ID:', eventId);

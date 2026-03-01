@@ -127,85 +127,51 @@ export async function createCalendarEvent(
   title: string,
   description: string,
   date: Date | string,
-  time?: string | null
+  time?: string | null,
+  attendees?: string[]
 ) {
-  console.log('🚀 VERSION 3.0 - createCalendarEvent INICIADO');
+  console.log('🚀 VERSION 3.1 - createCalendarEvent con asistentes');
   let eventToCreate: any;
 
   try {
     const calendar = await getCalendarClient(userId);
 
-    console.log('📅 Creando evento en Google Calendar:', { date, time, dateType: typeof date });
-
-    // Parsear fecha - puede venir como string "2025-11-17" o timestamp "2026-01-03T00:00:00+00:00"
+    // ... (parsing logic same as before)
     let dateStr: string;
-
     if (typeof date === 'string') {
-      // Extraer solo la parte de fecha YYYY-MM-DD
-      dateStr = date.split('T')[0]; // "2026-01-03T00:00:00+00:00" → "2026-01-03"
+      dateStr = date.split('T')[0];
     } else {
-      // Convertir Date a string YYYY-MM-DD en zona horaria local
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, '0');
       const day = String(date.getDate()).padStart(2, '0');
       dateStr = `${year}-${month}-${day}`;
     }
 
-    // Parsear time - puede venir como "14:42" o "14:42:00"
     let timeStr: string | null = null;
     if (time) {
-      // Extraer solo HH:mm (sin segundos)
       const timeParts = time.split(':');
-      timeStr = `${timeParts[0]}:${timeParts[1]}`; // "14:42:00" → "14:42"
+      timeStr = `${timeParts[0]}:${timeParts[1]}`;
     }
 
-    console.log('📅 Fecha parseada:', dateStr, 'Hora parseada:', timeStr);
+    const startEndData: any = timeStr ? {
+      start: { dateTime: `${dateStr}T${timeStr}:00`, timeZone: 'America/Lima' },
+      end: { dateTime: `${dateStr}T${String(Number(timeStr.split(':')[0]) + 1).padStart(2, '0')}:${timeStr.split(':')[1]}:00`, timeZone: 'America/Lima' }
+    } : {
+      start: { date: dateStr },
+      end: { date: dateStr }
+    };
 
-    // Si hay hora específica, crear evento con dateTime
-    // Si no hay hora, crear evento de todo el día con date
-    if (timeStr) {
-      // Evento con hora específica
-      const dateTimeStr = `${dateStr}T${timeStr}:00`;
-
-      // Calcular la hora de fin (1 hora después)
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      const endHours = hours + 1;
-      const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-      const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
-
-      eventToCreate = {
-        summary: title,
-        description: description || undefined,
-        start: {
-          dateTime: dateTimeStr,
-          timeZone: 'America/Lima',
-        },
-        end: {
-          dateTime: endDateTimeStr,
-          timeZone: 'America/Lima',
-        },
-      };
-
-      console.log('📅 Evento con hora específica:', JSON.stringify(eventToCreate, null, 2));
-    } else {
-      // Evento de todo el día (sin hora)
-      eventToCreate = {
-        summary: title,
-        description: description || undefined,
-        start: {
-          date: dateStr,
-        },
-        end: {
-          date: dateStr,
-        },
-      };
-
-      console.log('📅 Evento de todo el día:', JSON.stringify(eventToCreate, null, 2));
-    }
+    eventToCreate = {
+      summary: title,
+      description: description || undefined,
+      ...startEndData,
+      attendees: attendees?.map(email => ({ email })) || []
+    };
 
     const response = await calendar.events.insert({
       calendarId: 'primary',
       requestBody: eventToCreate,
+      sendUpdates: 'all' // Esto envía la invitación por email
     });
 
     console.log('✅ Evento creado con ID:', response.data.id);
@@ -232,12 +198,13 @@ export async function updateCalendarEvent(
   title: string,
   description: string,
   date: Date | string,
-  time?: string | null
+  time?: string | null,
+  attendees?: string[]
 ) {
   try {
     const calendar = await getCalendarClient(userId);
 
-    console.log('📅 Actualizando evento en Google Calendar:', { eventId, date, time, dateType: typeof date });
+    console.log('📅 Actualizando evento en Google Calendar con asistentes:', { eventId, attendees });
 
     // Parsear fecha - puede venir como string "2025-11-17" o timestamp "2026-01-03T00:00:00+00:00"
     let dateStr: string;
@@ -260,54 +227,28 @@ export async function updateCalendarEvent(
       timeStr = `${timeParts[0]}:${timeParts[1]}`; // "14:42:00" → "14:42"
     }
 
-    let event: any;
+    const startEndData: any = timeStr ? {
+      start: { dateTime: `${dateStr}T${timeStr}:00`, timeZone: 'America/Lima' },
+      end: { dateTime: `${dateStr}T${String(Number(timeStr.split(':')[0]) + 1).padStart(2, '0')}:${timeStr.split(':')[1]}:00`, timeZone: 'America/Lima' }
+    } : {
+      start: { date: dateStr },
+      end: { date: dateStr }
+    };
 
-    // Si hay hora específica, crear evento con dateTime
-    // Si no hay hora, crear evento de todo el día con date
-    if (timeStr) {
-      // Evento con hora específica
-      const dateTimeStr = `${dateStr}T${timeStr}:00`;
+    const eventToUpdate: any = {
+      summary: title,
+      description: description || undefined,
+      ...startEndData,
+      attendees: attendees?.map(email => ({ email })) || []
+    };
 
-      // Calcular la hora de fin (1 hora después)
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      const endHours = hours + 1;
-      const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-      const endDateTimeStr = `${dateStr}T${endTimeStr}:00`;
-
-      event = {
-        summary: title,
-        description: description || undefined,
-        start: {
-          dateTime: dateTimeStr,
-          timeZone: 'America/Lima',
-        },
-        end: {
-          dateTime: endDateTimeStr,
-          timeZone: 'America/Lima',
-        },
-      };
-
-      console.log('📅 Evento con hora específica a actualizar:', JSON.stringify(event, null, 2));
-    } else {
-      // Evento de todo el día (sin hora)
-      event = {
-        summary: title,
-        description: description || undefined,
-        start: {
-          date: dateStr,
-        },
-        end: {
-          date: dateStr,
-        },
-      };
-
-      console.log('📅 Evento de todo el día a actualizar:', JSON.stringify(event, null, 2));
-    }
+    console.log('📅 Evento a actualizar:', JSON.stringify(eventToUpdate, null, 2));
 
     await calendar.events.update({
       calendarId: 'primary',
       eventId: eventId,
-      requestBody: event,
+      requestBody: eventToUpdate,
+      sendUpdates: 'all'
     });
 
     console.log('✅ Evento actualizado correctamente');
