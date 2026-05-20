@@ -1,8 +1,11 @@
 import type React from 'react';
 import type { Metadata } from 'next';
-import { Geist } from 'next/font/google';
+import { Geist, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { Toaster } from 'sonner';
+import { cn } from "@/lib/utils";
+
+const jetbrainsMono = JetBrains_Mono({subsets:['latin'],variable:'--font-mono'});
 
 const geist = Geist({ subsets: ['latin'] });
 
@@ -17,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
+    <html lang="es" className={cn("font-mono", jetbrainsMono.variable)}>
       <body className={geist.className}>
         {children}
         <Toaster position="top-right" richColors />
